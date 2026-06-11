@@ -1,0 +1,112 @@
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" type="text/css" href="/menu.css">
+  <script type="text/javascript">
+    function navbarHighLight() {
+      var now = document.getElementById("import");
+      if (now)
+        now.className += " active";
+    }
+    window.onload = navbarHighLight;
+  </script>
+  <style>
+    .content {
+      max-width: 760px;
+      margin: 32px auto;
+      font-family: sans-serif;
+    }
+
+    .message {
+      margin: 16px 0;
+      padding: 12px;
+      border: 1px solid #ccc;
+    }
+
+    .error {
+      border-color: #c00;
+      color: #c00;
+    }
+
+    .import-card {
+      margin: 18px 0;
+      padding: 16px;
+      border: 1px solid #c7d9e3;
+      background: #f7fbfd;
+    }
+
+    .import-card h2 {
+      margin-top: 0;
+    }
+
+    .hint {
+      color: #555;
+      font-size: 14px;
+    }
+  </style>
+</head>
+
+<body>
+  <%- include('partials/menu'); -%>
+  <div class="content">
+    <h1>SBI CSV Import</h1>
+
+    <% if (error) { %>
+      <div class="message error"><%= error %></div>
+    <% } %>
+
+    <% if (result) { %>
+      <div class="message">
+        Imported <%= result.total %> rows from <%= result.label || 'CSV' %>.
+        Inserted: <%= result.inserted %>.
+        Updated: <%= result.updated %>.
+        <% if (result.extra) { %>
+          <br><%= result.extra %>.
+        <% } %>
+      </div>
+      <p><a href="<%= result.link || '/transactions' %>"><%= result.linkText || 'View imported transactions' %></a></p>
+    <% } %>
+
+    <div class="import-card">
+      <h2>Stock / Fund / US Stock CSV</h2>
+      <p class="hint">Use this for SBI transaction CSV files, including the US stock payment record sample.</p>
+      <form action="/import/sbi" method="post" enctype="multipart/form-data">
+        <p>
+          <input type="file" name="csv" accept=".csv,text/csv" required>
+        </p>
+        <p>
+          <button type="submit">Import SBI CSV</button>
+        </p>
+      </form>
+    </div>
+
+    <div class="import-card">
+      <h2>FX CSV</h2>
+      <p class="hint">Use this for SBI FX settlement CSV files like kessai20260610.csv.</p>
+      <form action="/import/fx" method="post" enctype="multipart/form-data">
+        <p>
+          <input type="file" name="csv" accept=".csv,text/csv" required>
+        </p>
+        <p>
+          <button type="submit">Import FX CSV</button>
+        </p>
+      </form>
+    </div>
+
+    <div class="import-card">
+      <h2>Gold CSV</h2>
+      <p class="hint">Use this for SBI gold order reference CSV files like OrderRefer20260610231019.csv.</p>
+      <form action="/import/gold" method="post" enctype="multipart/form-data">
+        <p>
+          <input type="file" name="csv" accept=".csv,text/csv" required>
+        </p>
+        <p>
+          <button type="submit">Import Gold CSV</button>
+        </p>
+      </form>
+    </div>
+  </div>
+</body>
+
+</html>

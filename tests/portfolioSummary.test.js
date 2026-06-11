@@ -1,0 +1,278 @@
+var assert = require('assert');
+var buildPortfolioSummary = require('../lib/portfolioSummary').buildPortfolioSummary;
+var buildPortfolioSummaryReport = require('../lib/portfolioSummary').buildPortfolioSummaryReport;
+
+function find(rows, symbol) {
+  return rows.filter(function (row) {
+    return row.symbol == symbol;
+  })[0];
+}
+
+var sameDayRows = buildPortfolioSummary([
+  {
+    tradeDateTime: '2025-09-30T15:00:00',
+    assetType: 'STOCK',
+    code: '7974',
+    symbol: '7974.T',
+    assetName: '任天堂',
+    side: 'SELL',
+    quantity: 100,
+    unitPrice: 12760,
+    settlementAmount: 1276000
+  },
+  {
+    tradeDateTime: '2025-09-30T09:00:00',
+    assetType: 'STOCK',
+    code: '7974',
+    symbol: '7974.T',
+    assetName: '任天堂',
+    side: 'BUY',
+    quantity: 100,
+    unitPrice: 12700,
+    settlementAmount: 1270000
+  }
+]);
+
+var nintendo = find(sameDayRows, '7974.T');
+assert.strictEqual(nintendo.assetClass, '日本株');
+assert.strictEqual(nintendo.displaySymbol, 'TSE:7974');
+assert.strictEqual(nintendo.txCount, 2);
+assert.strictEqual(nintendo.boughtQty, 100);
+assert.strictEqual(nintendo.soldQty, 100);
+assert.strictEqual(nintendo.netQty, 0);
+assert.strictEqual(nintendo.netInvested, -6000);
+assert.strictEqual(nintendo.fifoRealizedPl, 6000);
+assert.strictEqual(nintendo.remainingCost, 0);
+assert.strictEqual(nintendo.hasWarning, false);
+
+var fundRows = buildPortfolioSummary([
+  {
+    tradeDateTime: '2024-05-27T09:00:00',
+    assetType: 'FUND',
+    symbol: 'FUND:ニッセイ日経２２５インデックスファンド',
+    assetName: 'ニッセイ日経２２５インデックスファンド',
+    side: 'BUY',
+    quantity: 1044,
+    unitPrice: 4.7903,
+    settlementAmount: 5000
+  },
+  {
+    tradeDateTime: '2024-06-03T09:00:00',
+    assetType: 'FUND',
+    symbol: 'FUND:ニッセイ日経２２５インデックスファンド',
+    assetName: 'ニッセイ日経２２５インデックスファンド',
+    side: 'BUY',
+    quantity: 1044,
+    unitPrice: 4.7928,
+    settlementAmount: 5000
+  }
+]);
+
+var fund = find(fundRows, 'FUND:ニッセイ日経２２５インデックスファンド');
+assert.strictEqual(fund.assetClass, '投資信託');
+assert.strictEqual(fund.code, '');
+assert.strictEqual(fund.soldQty, 0);
+assert.strictEqual(fund.sellAmount, 0);
+assert.strictEqual(fund.netQty, 2088);
+assert.strictEqual(fund.fifoRealizedPl, 0);
+assert.strictEqual(fund.remainingCost, 10000);
+
+var pricedRows = buildPortfolioSummary([
+  {
+    tradeDateTime: '2025-01-01T09:00:00',
+    assetType: 'STOCK',
+    code: '7936',
+    symbol: '7936.T',
+    assetName: 'アシックス',
+    side: 'BUY',
+    quantity: 100,
+    unitPrice: 1000,
+    settlementAmount: 100000
+  },
+  {
+    tradeDateTime: '2025-01-02T09:00:00',
+    assetType: 'STOCK',
+    code: '7936',
+    symbol: '7936.T',
+    assetName: 'アシックス',
+    side: 'BUY',
+    quantity: 100,
+    unitPrice: 1200,
+    settlementAmount: 120000
+  },
+  {
+    tradeDateTime: '2025-01-03T15:00:00',
+    assetType: 'STOCK',
+    code: '7936',
+    symbol: '7936.T',
+    assetName: 'アシックス',
+    side: 'SELL',
+    quantity: 50,
+    unitPrice: 1300,
+    settlementAmount: 65000
+  }
+], {
+  '7936.T': {
+    latestPrice: 1500,
+    latestPriceDate: '2026-06-10',
+    latestPriceFetchedAt: '2026-06-10T00:00:00.000Z',
+    priceFetchStatus: 'OK',
+    priceFetchError: ''
+  }
+});
+
+var asics = find(pricedRows, '7936.T');
+assert.strictEqual(asics.netQty, 150);
+assert.strictEqual(asics.remainingCost, 170000);
+assert.strictEqual(asics.fifoRealizedPl, 15000);
+assert.strictEqual(asics.marketValue, 225000);
+assert.strictEqual(asics.unrealizedPl, 55000);
+assert.strictEqual(asics.latestPrice, 1500);
+
+var report = buildPortfolioSummaryReport([
+  {
+    tradeDateTime: '2025-01-01T09:00:00',
+    assetType: 'STOCK',
+    code: '7936',
+    symbol: '7936.T',
+    assetName: 'アシックス',
+    side: 'BUY',
+    quantity: 100,
+    unitPrice: 1000,
+    settlementAmount: 100000
+  },
+  {
+    tradeDateTime: '2025-01-01T09:00:00',
+    assetType: 'STOCK',
+    code: '7974',
+    symbol: '7974.T',
+    assetName: '任天堂',
+    side: 'BUY',
+    quantity: 100,
+    unitPrice: 2000,
+    settlementAmount: 200000
+  }
+], {
+  '7936.T': { latestPrice: 1500 },
+  '7974.T': { latestPrice: 3000 }
+});
+
+var reportAsics = find(report.rows, '7936.T');
+var reportNintendo = find(report.rows, '7974.T');
+assert.strictEqual(report.totals.marketValue, 450000);
+assert.strictEqual(report.totals.unrealizedPl, 150000);
+assert.strictEqual(report.totals.realizedPl, 0);
+assert.strictEqual(report.totals.totalPl, 150000);
+assert.strictEqual(reportAsics.marketValuePercent, 33.33);
+assert.strictEqual(reportNintendo.marketValuePercent, 66.67);
+assert.strictEqual(report.rows[0].symbol, '7974.T');
+assert.strictEqual(report.rows[1].symbol, '7936.T');
+
+var alphaCodeRows = buildPortfolioSummary([
+  {
+    tradeDateTime: '2026-06-10T09:00:00',
+    assetType: 'STOCK',
+    code: '520A1',
+    symbol: '520A1.T',
+    assetName: 'ジェイファーマ',
+    side: 'BUY',
+    quantity: 100,
+    unitPrice: 392,
+    settlementAmount: 39200
+  }
+]);
+
+var jPharma = find(alphaCodeRows, '520A.T');
+assert.strictEqual(jPharma.code, '520A');
+assert.strictEqual(jPharma.symbol, '520A.T');
+assert.strictEqual(jPharma.displaySymbol, 'TSE:520A');
+
+var usRows = buildPortfolioSummary([
+  {
+    tradeDateTime: '2026-05-28T09:00:00',
+    assetType: 'US_STOCK',
+    code: 'NVDA',
+    symbol: 'NVDA',
+    assetName: 'エヌビディア',
+    side: 'BUY',
+    quantity: 1,
+    unitPrice: 209.635,
+    settlementAmount: 33517
+  }
+]);
+
+var nvda = find(usRows, 'NVDA');
+assert.strictEqual(nvda.assetClass, '米国株');
+assert.strictEqual(nvda.code, 'NVDA');
+assert.strictEqual(nvda.symbol, 'NVDA');
+assert.strictEqual(nvda.displaySymbol, 'NVDA');
+assert.strictEqual(nvda.remainingCost, 33517);
+
+var pricedUsRows = buildPortfolioSummary([
+  {
+    tradeDateTime: '2026-05-28T09:00:00',
+    assetType: 'US_STOCK',
+    code: 'NVDA',
+    symbol: 'NVDA',
+    assetName: 'エヌビディア',
+    side: 'BUY',
+    quantity: 1,
+    unitPrice: 209.635,
+    price: 209.635,
+    settlementAmount: 33517
+  }
+], {
+  NVDA: { latestPrice: 210 }
+});
+
+var pricedNvda = find(pricedUsRows, 'NVDA');
+assert.strictEqual(pricedNvda.latestPrice, 210);
+assert.strictEqual(pricedNvda.latestPriceCurrency, 'USD');
+assert.strictEqual(pricedNvda.estimatedFxRate, 159.88);
+assert.strictEqual(pricedNvda.effectiveLatestPrice, 33574.8);
+assert.strictEqual(pricedNvda.marketValue, 33574.8);
+assert.strictEqual(pricedNvda.unrealizedPl, 57.8);
+
+var goldRows = buildPortfolioSummary([
+  {
+    tradeDateTime: '9999-12-31T09:00:00',
+    assetType: 'GOLD',
+    code: '',
+    symbol: 'GOLD_JPY',
+    assetName: 'Gold',
+    side: 'BUY',
+    quantity: 10,
+    unitPrice: 12000,
+    settlementAmount: 120000
+  }
+], {
+  GOLD_JPY: { latestPrice: 13000, latestPriceDate: '2026-06-10' }
+});
+
+var gold = find(goldRows, 'GOLD_JPY');
+assert.strictEqual(gold.assetClass, 'Gold');
+assert.strictEqual(gold.displaySymbol, 'GOLD/JPY');
+assert.strictEqual(gold.netQty, 10);
+assert.strictEqual(gold.remainingCost, 120000);
+assert.strictEqual(gold.latestPriceCurrency, 'JPY');
+assert.strictEqual(gold.marketValue, 130000);
+assert.strictEqual(gold.unrealizedPl, 10000);
+
+var warningRows = buildPortfolioSummary([
+  {
+    tradeDateTime: '2025-01-01T15:00:00',
+    assetType: 'STOCK',
+    code: '8306',
+    symbol: '8306.T',
+    assetName: '三菱ＵＦＪフィナンシャル・グループ',
+    side: 'SELL',
+    quantity: 100,
+    unitPrice: 1200,
+    settlementAmount: 120000
+  }
+]);
+
+var warning = find(warningRows, '8306.T');
+assert.strictEqual(warning.hasWarning, true);
+
+console.log('portfolioSummary tests passed');

@@ -1,0 +1,391 @@
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" type="text/css" href="/menu.css">
+  <script type="text/javascript">
+    function navbarHighLight() {
+      var now = document.getElementById("summary");
+      if (now)
+        now.className += " active";
+    }
+
+    function formatNumber(value) {
+      return Number(value || 0).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+    }
+
+    window.onload = function () {
+      navbarHighLight();
+      var cells = document.querySelectorAll('[data-number]');
+      for (var i = 0; i < cells.length; i++) {
+        cells[i].textContent = formatNumber(cells[i].getAttribute('data-number'));
+      }
+    };
+  </script>
+  <style>
+    .content {
+      margin: 24px;
+      font-family: sans-serif;
+    }
+
+    table {
+      min-width: 1850px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      border: 1px solid #c7d9e3;
+      padding: 4px 6px;
+      white-space: nowrap;
+    }
+
+    th {
+      background: #2f6f91;
+      color: #fff;
+      text-align: left;
+    }
+
+    tbody tr:nth-child(odd) {
+      background: #b9d7e5;
+    }
+
+    tbody tr:nth-child(even) {
+      background: #dedede;
+    }
+
+    .number {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .negative {
+      color: #f00;
+    }
+
+    .warning {
+      color: #9b5b00;
+      font-weight: bold;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 12px 0;
+    }
+
+    .message {
+      padding: 8px 10px;
+      border: 1px solid #b7c7d0;
+      background: #eef7fb;
+    }
+
+    .totals {
+      display: flex;
+      gap: 12px;
+      margin: 12px 0;
+    }
+
+    .total-item {
+      padding: 8px 10px;
+      border: 1px solid #b7c7d0;
+      background: #f6fbfd;
+    }
+
+    .manual-form {
+      display: flex;
+      align-items: end;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin: 12px 0;
+      padding: 12px;
+      border: 1px solid #b7c7d0;
+      background: #f6fbfd;
+    }
+
+    .manual-form label {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 13px;
+    }
+
+    .manual-form input {
+      width: 150px;
+      padding: 4px 6px;
+    }
+
+    .mapping {
+      display: flex;
+      gap: 4px;
+    }
+
+    .mapping input {
+      width: 260px;
+    }
+
+    .status {
+      max-width: 180px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .table-scroll {
+      max-width: 100%;
+      overflow-x: auto;
+      border: 1px solid #c7d9e3;
+    }
+
+    .sticky-col-1,
+    .sticky-col-2 {
+      position: sticky;
+      z-index: 2;
+    }
+
+    .sticky-col-1 {
+      left: 0;
+      width: 96px;
+      min-width: 96px;
+    }
+
+    .sticky-col-2 {
+      left: 96px;
+      width: 360px;
+      min-width: 360px;
+      max-width: 360px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    th.sticky-col-1,
+    th.sticky-col-2 {
+      z-index: 4;
+      background: #2f6f91;
+    }
+
+    tbody tr:nth-child(odd) .sticky-col-1,
+    tbody tr:nth-child(odd) .sticky-col-2 {
+      background: #b9d7e5;
+    }
+
+    tbody tr:nth-child(even) .sticky-col-1,
+    tbody tr:nth-child(even) .sticky-col-2 {
+      background: #dedede;
+    }
+  </style>
+</head>
+
+<body>
+  <%- include('partials/menu'); -%>
+  <div class="content">
+    <h1>Portfolio Summary</h1>
+    <div class="toolbar">
+      <form action="/prices/refresh" method="post">
+        <button type="submit">Update Prices</button>
+      </form>
+      <% if (message) { %>
+        <span class="message"><%= message %></span>
+      <% } %>
+    </div>
+    <h2>Combined Summary</h2>
+    <div class="totals">
+      <div class="total-item">
+        Portfolio Market Value:
+        <strong class="<%= combinedTotals.portfolioMarketValue < 0 ? 'negative' : '' %>" data-number="<%= combinedTotals.portfolioMarketValue %>"></strong>
+      </div>
+      <div class="total-item">
+        Portfolio Total P/L:
+        <strong class="<%= combinedTotals.portfolioTotalPl < 0 ? 'negative' : '' %>" data-number="<%= combinedTotals.portfolioTotalPl %>"></strong>
+      </div>
+      <div class="total-item">
+        FX Total P/L:
+        <strong class="<%= combinedTotals.fxTotalPl < 0 ? 'negative' : '' %>" data-number="<%= combinedTotals.fxTotalPl %>"></strong>
+      </div>
+      <div class="total-item">
+        Combined Realized P/L:
+        <strong class="<%= combinedTotals.combinedRealizedPl < 0 ? 'negative' : '' %>" data-number="<%= combinedTotals.combinedRealizedPl %>"></strong>
+      </div>
+      <div class="total-item">
+        Combined Total P/L:
+        <strong class="<%= combinedTotals.combinedTotalPl < 0 ? 'negative' : '' %>" data-number="<%= combinedTotals.combinedTotalPl %>"></strong>
+      </div>
+    </div>
+    <h2>Gold Holding</h2>
+    <form class="manual-form" action="/gold" method="post">
+      <label>
+        Amount Gram
+        <input type="number" name="grams" min="0" step="0.0001" value="<%= goldHolding.grams || 0 %>" required>
+      </label>
+      <label>
+        Buy Amount JPY
+        <input type="number" name="buyAmount" min="0" step="1" value="<%= goldHolding.buyAmount || 0 %>" required>
+      </label>
+      <button type="submit">Update Gold</button>
+    </form>
+    <h2>Portfolio Summary</h2>
+    <div class="totals">
+      <div class="total-item">
+        Market Value:
+        <strong class="<%= totals.marketValue < 0 ? 'negative' : '' %>" data-number="<%= totals.marketValue %>"></strong>
+      </div>
+      <div class="total-item">
+        Unrealized P/L:
+        <strong class="<%= totals.unrealizedPl < 0 ? 'negative' : '' %>" data-number="<%= totals.unrealizedPl %>"></strong>
+      </div>
+      <div class="total-item">
+        Realized P/L:
+        <strong class="<%= totals.realizedPl < 0 ? 'negative' : '' %>" data-number="<%= totals.realizedPl %>"></strong>
+      </div>
+      <div class="total-item">
+        Total P/L:
+        <strong class="<%= totals.totalPl < 0 ? 'negative' : '' %>" data-number="<%= totals.totalPl %>"></strong>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th class="sticky-col-1">Asset Class</th>
+            <th class="sticky-col-2">Name</th>
+            <th>Code</th>
+            <th>Symbol</th>
+            <th>Tx Count</th>
+            <th>Bought Qty</th>
+            <th>Buy Amount</th>
+            <th>Sold Qty</th>
+            <th>Sell Amount</th>
+            <th>Net Qty</th>
+            <th>Net Invested</th>
+            <th>FIFO Realized P/L</th>
+            <th>Remaining Cost</th>
+            <th>Current Price</th>
+            <th>JPY Price</th>
+            <th>Market Value</th>
+            <th>Market Value %</th>
+            <th>Unrealized P/L</th>
+            <th>Price Date / Status</th>
+            <th>Fund Mapping</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% for(var i=0; i<listitem.length; i++) { %>
+            <tr title="<%= listitem[i].warning %>">
+              <td class="sticky-col-1">
+                <%= listitem[i].assetClass %>
+                <% if (listitem[i].hasWarning) { %>
+                  <span class="warning">!</span>
+                <% } %>
+              </td>
+              <td class="sticky-col-2" title="<%= listitem[i].name %>"><%= listitem[i].name %></td>
+              <td><%= listitem[i].code %></td>
+              <td><%= listitem[i].displaySymbol %></td>
+              <td class="number" data-number="<%= listitem[i].txCount %>"></td>
+              <td class="number" data-number="<%= listitem[i].boughtQty %>"></td>
+              <td class="number <%= listitem[i].buyAmount < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].buyAmount %>"></td>
+              <td class="number" data-number="<%= listitem[i].soldQty %>"></td>
+              <td class="number <%= listitem[i].sellAmount < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].sellAmount %>"></td>
+              <td class="number <%= listitem[i].netQty < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].netQty %>"></td>
+              <td class="number <%= listitem[i].netInvested < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].netInvested %>"></td>
+              <td class="number <%= listitem[i].fifoRealizedPl < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].fifoRealizedPl %>"></td>
+              <td class="number <%= listitem[i].remainingCost < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].remainingCost %>"></td>
+              <% if (listitem[i].latestPrice != null) { %>
+                <td class="number" data-number="<%= listitem[i].latestPrice %>"></td>
+              <% } else { %>
+                <td class="number">-</td>
+              <% } %>
+              <% if (listitem[i].effectiveLatestPrice != null && listitem[i].assetType == 'US_STOCK') { %>
+                <td class="number" title="Estimated with imported FX rate <%= listitem[i].estimatedFxRate %>" data-number="<%= listitem[i].effectiveLatestPrice %>"></td>
+              <% } else if (listitem[i].effectiveLatestPrice != null) { %>
+                <td class="number" data-number="<%= listitem[i].effectiveLatestPrice %>"></td>
+              <% } else { %>
+                <td class="number">-</td>
+              <% } %>
+              <% if (listitem[i].marketValue != null) { %>
+                <td class="number <%= listitem[i].marketValue < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].marketValue %>"></td>
+              <% } else { %>
+                <td class="number">-</td>
+              <% } %>
+              <% if (listitem[i].marketValuePercent != null) { %>
+                <td class="number" data-number="<%= listitem[i].marketValuePercent %>"></td>
+              <% } else { %>
+                <td class="number">-</td>
+              <% } %>
+              <% if (listitem[i].unrealizedPl != null) { %>
+                <td class="number <%= listitem[i].unrealizedPl < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].unrealizedPl %>"></td>
+              <% } else { %>
+                <td class="number">-</td>
+              <% } %>
+              <td class="status" title="<%= listitem[i].priceFetchError %>">
+                <%= listitem[i].latestPriceDate || listitem[i].priceFetchStatus || '-' %>
+                <% if (listitem[i].priceFetchError) { %>
+                  : <%= listitem[i].priceFetchError %>
+                <% } %>
+              </td>
+              <td>
+                <% if (listitem[i].assetType == 'FUND') { %>
+                  <form class="mapping" action="/assets/mapping" method="post">
+                    <input type="hidden" name="symbol" value="<%= listitem[i].symbol %>">
+                    <input type="text" name="priceSourceUrl" value="<%= listitem[i].priceSourceUrl %>" placeholder="Yahoo fund URL or code">
+                    <button type="submit">Save</button>
+                  </form>
+                <% } else { %>
+                  -
+                <% } %>
+              </td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+    <h2>FX Summary</h2>
+    <div class="totals">
+      <div class="total-item">
+        FX Swap:
+        <strong class="<%= fxSummary.totals.realizedSwap < 0 ? 'negative' : '' %>" data-number="<%= fxSummary.totals.realizedSwap %>"></strong>
+      </div>
+      <div class="total-item">
+        FX Realized P/L:
+        <strong class="<%= fxSummary.totals.realizedPl < 0 ? 'negative' : '' %>" data-number="<%= fxSummary.totals.realizedPl %>"></strong>
+      </div>
+      <div class="total-item">
+        FX Total P/L:
+        <strong class="<%= fxSummary.totals.totalPl < 0 ? 'negative' : '' %>" data-number="<%= fxSummary.totals.totalPl %>"></strong>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Currency Pair</th>
+          <th>Tx Count</th>
+          <th>Open Qty</th>
+          <th>Settlement Qty</th>
+          <th>Delivery Qty</th>
+          <th>Realized Swap</th>
+          <th>Realized P/L</th>
+          <th>Total P/L</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for(var j=0; j<fxSummary.rows.length; j++) { %>
+          <tr>
+            <td><%= fxSummary.rows[j].pair %></td>
+            <td class="number" data-number="<%= fxSummary.rows[j].txCount %>"></td>
+            <td class="number" data-number="<%= fxSummary.rows[j].openQty %>"></td>
+            <td class="number" data-number="<%= fxSummary.rows[j].settlementQty %>"></td>
+            <td class="number" data-number="<%= fxSummary.rows[j].deliveryQty %>"></td>
+            <td class="number <%= fxSummary.rows[j].realizedSwap < 0 ? 'negative' : '' %>" data-number="<%= fxSummary.rows[j].realizedSwap %>"></td>
+            <td class="number <%= fxSummary.rows[j].realizedPl < 0 ? 'negative' : '' %>" data-number="<%= fxSummary.rows[j].realizedPl %>"></td>
+            <td class="number <%= fxSummary.rows[j].totalPl < 0 ? 'negative' : '' %>" data-number="<%= fxSummary.rows[j].totalPl %>"></td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</body>
+
+</html>

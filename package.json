@@ -1,0 +1,26 @@
+{
+  "name": "sbi-portfolio-tracker",
+  "version": "1.0.0",
+  "description": "SBI portfolio import and summary tracker",
+  "main": "app.js",
+  "scripts": {
+    "test": "node tests/portfolioSummary.test.js && node tests/priceParser.test.js",
+    "start": "node app.js"
+  },
+  "author": "iriyano",
+  "license": "ISC",
+  "dependencies": {
+    "body-parser": "^1.19.0",
+    "ejs": "^3.1.2",
+    "express": "^4.17.1",
+    "formidable": "^1.2.2",
+    "mongodb": "^3.6.0"
+  },
+  "directories": {
+    "doc": "docs"
+  },
+  "keywords": [
+    "sbi",
+    "portfolio"
+  ]
+}
