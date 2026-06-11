@@ -6,6 +6,7 @@ var crypto = require('crypto');
 var TextDecoder = require('util').TextDecoder;
 var buildPortfolioSummary = require('./lib/portfolioSummary').buildPortfolioSummary;
 var buildPortfolioSummaryReport = require('./lib/portfolioSummary').buildPortfolioSummaryReport;
+var withDb = require('./lib/db').withDb;
 var app = express();
 
 var PORT = 80;
@@ -20,16 +21,6 @@ app.use(
 )
 
 app.use(bodyParser.json())
-
-const MongoClient = require('mongodb').MongoClient;
-
-// Connection URL
-const url = 'mongodb://localhost:27017';
-
-// Database Name
-const dbName = 'sbi_portfolio_tracker';
-
-// Create a new MongoClient
 
 function parseCsvLine(line) {
   var values = [];
@@ -458,20 +449,6 @@ function parseGoldCsv(buffer, sourceFile) {
     rowCount: rows.length,
     rawRows: rows
   };
-}
-
-function withDb(callback) {
-  const client = new MongoClient(url);
-  client.connect(function (err) {
-    if (err) {
-      callback(err);
-      return;
-    }
-
-    callback(null, client.db(dbName), function () {
-      client.close();
-    });
-  });
 }
 
 function importTransactions(db, docs, callback) {

@@ -39,16 +39,17 @@ var stockHtml = [
 assert.strictEqual(parseStockPriceFromHtml(stockHtml, '520A.T'), 392);
 
 var foreignRows = parseSbiCsv(fs.readFileSync('samples/PaymentRecords.csv'), 'PaymentRecords.csv');
-assert.strictEqual(foreignRows.length, 1);
-assert.strictEqual(foreignRows[0].assetType, 'US_STOCK');
-assert.strictEqual(foreignRows[0].code, 'NVDA');
-assert.strictEqual(foreignRows[0].symbol, 'NVDA');
-assert.strictEqual(foreignRows[0].side, 'BUY');
-assert.strictEqual(foreignRows[0].quantity, 1);
-assert.strictEqual(foreignRows[0].price, 209.635);
-assert.strictEqual(foreignRows[0].settlementAmount, 33517);
-assert.strictEqual(foreignRows[0].currency, 'USD');
-assert.strictEqual(foreignRows[0].settlementCurrency, 'JPY');
+assert.strictEqual(foreignRows.length, 4);
+var sampleNvdaRow = foreignRows.filter(function (row) {
+  return row.code == 'NVDA' && row.quantity == 1 && row.price == 209.635;
+})[0];
+assert.ok(sampleNvdaRow);
+assert.strictEqual(sampleNvdaRow.assetType, 'US_STOCK');
+assert.strictEqual(sampleNvdaRow.symbol, 'NVDA');
+assert.strictEqual(sampleNvdaRow.side, 'BUY');
+assert.strictEqual(sampleNvdaRow.settlementAmount, 33517);
+assert.strictEqual(sampleNvdaRow.currency, 'USD');
+assert.strictEqual(sampleNvdaRow.settlementCurrency, 'JPY');
 
 var fxRows = parseFxCsv(fs.readFileSync('samples/kessai20260610.csv'), 'kessai20260610.csv');
 assert.ok(fxRows.length > 0);

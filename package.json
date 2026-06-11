@@ -4,7 +4,7 @@
   "description": "SBI portfolio import and summary tracker",
   "main": "app.js",
   "scripts": {
-    "test": "node tests/portfolioSummary.test.js && node tests/priceParser.test.js",
+    "test": "node tests/portfolioSummary.test.js && node tests/priceParser.test.js && node tests/sqliteStorage.test.js",
     "start": "node app.js"
   },
   "author": "iriyano",
@@ -14,7 +14,7 @@
     "ejs": "^3.1.2",
     "express": "^4.17.1",
     "formidable": "^1.2.2",
-    "mongodb": "^3.6.0"
+    "sqlite3": "^6.0.1"
   },
   "directories": {
     "doc": "docs"
