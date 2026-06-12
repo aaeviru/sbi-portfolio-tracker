@@ -1,0 +1,358 @@
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" type="text/css" href="/menu.css">
+  <script type="text/javascript">
+    function navbarHighLight() {
+      var now = document.getElementById("trade-chart");
+      if (now) {
+        now.className += " active";
+      }
+    }
+    window.onload = function () {
+      navbarHighLight();
+      initTradeChart();
+    };
+  </script>
+  <style>
+    .content {
+      margin: 24px;
+      font-family: sans-serif;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: end;
+      gap: 16px;
+      margin: 16px 0;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+
+    select {
+      min-width: 420px;
+      max-width: 100%;
+      padding: 6px;
+      font-size: 14px;
+    }
+
+    .summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin: 12px 0;
+      font-size: 13px;
+    }
+
+    .summary span {
+      border: 1px solid #ccc;
+      padding: 6px 8px;
+      background: #f5f5f5;
+    }
+
+    .chart-wrap {
+      width: 100%;
+      overflow-x: auto;
+      border: 1px solid #c9d7df;
+      background: #fff;
+    }
+
+    svg {
+      display: block;
+      min-width: 900px;
+      width: 100%;
+      height: 420px;
+    }
+
+    .axis {
+      stroke: #555;
+      stroke-width: 1;
+    }
+
+    .grid {
+      stroke: #e6e6e6;
+      stroke-width: 1;
+    }
+
+    .series-line {
+      fill: none;
+      stroke: #768894;
+      stroke-width: 1.5;
+    }
+
+    .buy {
+      fill: #0f8b4c;
+      stroke: #064b2a;
+      stroke-width: 1;
+    }
+
+    .sell {
+      fill: #d33f2f;
+      stroke: #7f1e16;
+      stroke-width: 1;
+    }
+
+    .axis-label,
+    .point-label,
+    .empty {
+      fill: #222;
+      font-size: 12px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin-top: 16px;
+    }
+
+    th,
+    td {
+      border: 1px solid #ddd;
+      padding: 6px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #eee;
+    }
+
+    .side-buy {
+      color: #0f6f3f;
+      font-weight: bold;
+    }
+
+    .side-sell {
+      color: #b22a20;
+      font-weight: bold;
+    }
+  </style>
+</head>
+
+<body>
+  <%- include('partials/menu'); -%>
+  <div class="content">
+    <h1>Trade Chart</h1>
+
+    <% if (assets.length === 0) { %>
+      <p>No stock or fund buy/sell transactions are imported yet.</p>
+    <% } else { %>
+      <div class="toolbar">
+        <div>
+          <label for="assetSelect">Asset</label>
+          <select id="assetSelect"></select>
+        </div>
+      </div>
+
+      <div id="assetSummary" class="summary"></div>
+
+      <div class="chart-wrap">
+        <svg id="tradeChart" viewBox="0 0 900 420" role="img" aria-label="Buy and sell price chart"></svg>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Side</th>
+            <th>Price</th>
+            <th>Quantity</th>
+            <th>Amount</th>
+            <th>Account</th>
+          </tr>
+        </thead>
+        <tbody id="tradeRows"></tbody>
+      </table>
+    <% } %>
+  </div>
+
+  <script type="text/javascript">
+    var chartAssets = <%- chartDataJson %>;
+
+    function formatNumber(value) {
+      if (value === null || value === undefined || value === '') {
+        return '-';
+      }
+      return Number(value).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+    }
+
+    function svgEl(name, attrs) {
+      var el = document.createElementNS('http://www.w3.org/2000/svg', name);
+      Object.keys(attrs || {}).forEach(function (key) {
+        el.setAttribute(key, attrs[key]);
+      });
+      return el;
+    }
+
+    function dateValue(date) {
+      return new Date(date + 'T00:00:00').getTime();
+    }
+
+    function setText(parent, x, y, value, className, anchor) {
+      var text = svgEl('text', {
+        x: x,
+        y: y,
+        class: className || 'axis-label',
+        'text-anchor': anchor || 'start'
+      });
+      text.textContent = value;
+      parent.appendChild(text);
+      return text;
+    }
+
+    function renderSummary(asset) {
+      var summary = document.getElementById('assetSummary');
+      summary.innerHTML = '';
+      [
+        asset.displaySymbol + ' / ' + asset.name,
+        asset.assetType,
+        asset.priceUnit,
+        'BUY ' + asset.buyCount,
+        'SELL ' + asset.sellCount,
+        asset.firstDate + ' to ' + asset.lastDate
+      ].forEach(function (value) {
+        var item = document.createElement('span');
+        item.textContent = value;
+        summary.appendChild(item);
+      });
+    }
+
+    function renderChart(asset) {
+      var svg = document.getElementById('tradeChart');
+      svg.innerHTML = '';
+
+      var width = 900;
+      var height = 420;
+      var left = 78;
+      var right = 28;
+      var top = 28;
+      var bottom = 58;
+      var innerWidth = width - left - right;
+      var innerHeight = height - top - bottom;
+      var points = asset.points || [];
+
+      if (points.length === 0) {
+        setText(svg, 30, 50, 'No price points for this asset.', 'empty');
+        return;
+      }
+
+      var minDate = Math.min.apply(null, points.map(function (p) { return dateValue(p.date); }));
+      var maxDate = Math.max.apply(null, points.map(function (p) { return dateValue(p.date); }));
+      var prices = points.map(function (p) { return Number(p.price); });
+      var minPrice = Math.min.apply(null, prices);
+      var maxPrice = Math.max.apply(null, prices);
+      var pricePadding = minPrice === maxPrice ? Math.max(1, minPrice * 0.1) : (maxPrice - minPrice) * 0.08;
+      minPrice -= pricePadding;
+      maxPrice += pricePadding;
+
+      function xFor(date) {
+        if (minDate === maxDate) {
+          return left + innerWidth / 2;
+        }
+        return left + ((dateValue(date) - minDate) / (maxDate - minDate)) * innerWidth;
+      }
+
+      function yFor(price) {
+        return top + (1 - ((price - minPrice) / (maxPrice - minPrice))) * innerHeight;
+      }
+
+      for (var i = 0; i <= 4; i++) {
+        var y = top + innerHeight * (i / 4);
+        var price = maxPrice - (maxPrice - minPrice) * (i / 4);
+        svg.appendChild(svgEl('line', { x1: left, y1: y, x2: width - right, y2: y, class: 'grid' }));
+        setText(svg, left - 10, y + 4, formatNumber(price), 'axis-label', 'end');
+      }
+
+      svg.appendChild(svgEl('line', { x1: left, y1: top, x2: left, y2: height - bottom, class: 'axis' }));
+      svg.appendChild(svgEl('line', { x1: left, y1: height - bottom, x2: width - right, y2: height - bottom, class: 'axis' }));
+      setText(svg, left, height - 24, asset.firstDate, 'axis-label');
+      setText(svg, width - right, height - 24, asset.lastDate, 'axis-label', 'end');
+      setText(svg, left, 18, asset.priceUnit, 'axis-label');
+
+      var linePoints = points.map(function (p) {
+        return xFor(p.date) + ',' + yFor(p.price);
+      }).join(' ');
+      svg.appendChild(svgEl('polyline', { points: linePoints, class: 'series-line' }));
+
+      points.forEach(function (point) {
+        var x = xFor(point.date);
+        var y = yFor(point.price);
+        var marker;
+        if (point.side === 'SELL') {
+          marker = svgEl('rect', { x: x - 5, y: y - 5, width: 10, height: 10, class: 'sell' });
+        } else {
+          marker = svgEl('circle', { cx: x, cy: y, r: 5, class: 'buy' });
+        }
+        var title = svgEl('title');
+        title.textContent = point.date + ' ' + point.side + ' price ' + formatNumber(point.price) +
+          ' qty ' + formatNumber(point.quantity);
+        marker.appendChild(title);
+        svg.appendChild(marker);
+      });
+    }
+
+    function renderRows(asset) {
+      var body = document.getElementById('tradeRows');
+      body.innerHTML = '';
+      (asset.points || []).forEach(function (point) {
+        var tr = document.createElement('tr');
+        var sideClass = point.side === 'BUY' ? 'side-buy' : 'side-sell';
+        [
+          point.date,
+          point.side,
+          formatNumber(point.price),
+          formatNumber(point.quantity),
+          formatNumber(point.amount),
+          point.account || ''
+        ].forEach(function (value, index) {
+          var td = document.createElement('td');
+          td.textContent = value;
+          if (index === 1) {
+            td.className = sideClass;
+          }
+          tr.appendChild(td);
+        });
+        body.appendChild(tr);
+      });
+    }
+
+    function renderSelectedAsset() {
+      var select = document.getElementById('assetSelect');
+      var asset = chartAssets[Number(select.value)];
+      if (!asset) {
+        return;
+      }
+      renderSummary(asset);
+      renderChart(asset);
+      renderRows(asset);
+    }
+
+    function initTradeChart() {
+      if (!chartAssets || chartAssets.length === 0) {
+        return;
+      }
+
+      var select = document.getElementById('assetSelect');
+      chartAssets.forEach(function (asset, index) {
+        var option = document.createElement('option');
+        option.value = index;
+        option.textContent = asset.displaySymbol + ' - ' + asset.name;
+        select.appendChild(option);
+      });
+      select.addEventListener('change', renderSelectedAsset);
+      renderSelectedAsset();
+    }
+  </script>
+</body>
+
+</html>

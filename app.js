@@ -6,6 +6,7 @@ var crypto = require('crypto');
 var TextDecoder = require('util').TextDecoder;
 var buildPortfolioSummary = require('./lib/portfolioSummary').buildPortfolioSummary;
 var buildPortfolioSummaryReport = require('./lib/portfolioSummary').buildPortfolioSummaryReport;
+var buildTradeChartData = require('./lib/tradeChart').buildTradeChartData;
 var withDb = require('./lib/db').withDb;
 var app = express();
 
@@ -1513,6 +1514,29 @@ app.get('/transactions', function (req, res) {
           start: total === 0 ? 0 : (page - 1) * pageSize + 1,
           end: Math.min(page * pageSize, total)
         }
+      });
+    });
+  });
+});
+
+app.get('/trade-chart', function (req, res) {
+  withDb(function (err, db, close) {
+    if (err) {
+      res.status(500).send(err.message);
+      return;
+    }
+
+    findAllTransactions(db, function (findErr, docs) {
+      close();
+      if (findErr) {
+        res.status(500).send(findErr.message);
+        return;
+      }
+
+      var assets = buildTradeChartData(docs);
+      res.render('trade-chart.ejs', {
+        assets: assets,
+        chartDataJson: JSON.stringify(assets).replace(/</g, '\\u003c')
       });
     });
   });
