@@ -6,7 +6,9 @@ var parseFxCsv = priceParsers.parseFxCsv;
 var parseGoldCsv = priceParsers.parseGoldCsv;
 var buildCombinedSummaryTotals = priceParsers.buildCombinedSummaryTotals;
 var calculateGoldPricePerGramJpy = priceParsers.calculateGoldPricePerGramJpy;
+var findLatestBuyDatesBySymbol = priceParsers.findLatestBuyDatesBySymbol;
 var parseYahooChartDailyRates = priceParsers.parseYahooChartDailyRates;
+var parseYahooChartDailyPriceHistory = priceParsers.parseYahooChartDailyPriceHistory;
 var parseFundPriceFromHtml = priceParsers.parseFundPriceFromHtml;
 var parseStockPriceFromHtml = priceParsers.parseStockPriceFromHtml;
 
@@ -95,6 +97,40 @@ assert.strictEqual(dailyRates[0].pair, 'USDJPY');
 assert.strictEqual(dailyRates[0].rateType, 'DAILY_CLOSE');
 assert.strictEqual(dailyRates[0].rate, 155.9);
 assert.strictEqual(dailyRates[1].close, 156.1);
+
+var dailyPrices = parseYahooChartDailyPriceHistory({
+  chart: {
+    result: [{
+      timestamp: [1781107200, 1781193600],
+      indicators: {
+        quote: [{
+          open: [280.1, 281.4],
+          high: [286.2, 287.5],
+          low: [279.8, 280.2],
+          close: [285.9, 286.1],
+          volume: [1000000, 1200000]
+        }]
+      }
+    }]
+  }
+}, { symbol: 'MCD', assetType: 'US_STOCK' });
+assert.strictEqual(dailyPrices.length, 2);
+assert.strictEqual(dailyPrices[0].symbol, 'MCD');
+assert.strictEqual(dailyPrices[0].currency, 'USD');
+assert.strictEqual(dailyPrices[0].open, 280.1);
+assert.strictEqual(dailyPrices[1].close, 286.1);
+assert.strictEqual(dailyPrices[1].volume, 1200000);
+
+var latestBuyDates = findLatestBuyDatesBySymbol([
+  { assetType: 'STOCK', side: 'BUY', symbol: '7974.T', tradeDate: '2026-06-01' },
+  { assetType: 'STOCK', side: 'SELL', symbol: '7974.T', tradeDate: '2026-06-05' },
+  { assetType: 'STOCK', side: 'BUY', symbol: '7974.T', tradeDate: '2026-06-10' },
+  { assetType: 'US_STOCK', side: 'BUY', symbol: 'MCD', tradeDate: '2026-06-07' },
+  { assetType: 'FUND', side: 'BUY', symbol: 'FUND:TOPIX', tradeDate: '2026-06-08' }
+]);
+assert.strictEqual(latestBuyDates['7974.T'], '2026-06-10');
+assert.strictEqual(latestBuyDates.MCD, '2026-06-06');
+assert.strictEqual(latestBuyDates['FUND:TOPIX'], undefined);
 
 var combinedTotals = buildCombinedSummaryTotals(
   { marketValue: 1000000, unrealizedPl: 50000, realizedPl: 10000, totalPl: 60000 },

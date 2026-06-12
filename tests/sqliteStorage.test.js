@@ -165,6 +165,30 @@ async function main() {
   assert.strictEqual(latestRates.length, 1);
   assert.strictEqual(latestRates[0].rate, 155.5);
 
+  var priceHistory = db.collection('priceHistory');
+  var firstHistory = await updateOne(priceHistory, { symbol: '7974.T', priceDate: '2026-06-12', source: 'YAHOO_CHART' }, { $set: {
+    symbol: '7974.T',
+    assetType: 'STOCK',
+    priceDate: '2026-06-12',
+    currency: 'JPY',
+    open: 12000,
+    high: 12300,
+    low: 11900,
+    close: 12200,
+    volume: 1000000,
+    source: 'YAHOO_CHART',
+    status: 'OK'
+  } }, { upsert: true });
+  var secondHistory = await updateOne(priceHistory, { symbol: '7974.T', priceDate: '2026-06-12', source: 'YAHOO_CHART' }, { $set: {
+    close: 12250,
+    status: 'OK'
+  } }, { upsert: true });
+  assert.strictEqual(firstHistory.upsertedCount, 1);
+  assert.strictEqual(secondHistory.modifiedCount, 1);
+  var historyRows = await toArray(priceHistory.find({ symbol: '7974.T' }).limit(1));
+  assert.strictEqual(historyRows.length, 1);
+  assert.strictEqual(historyRows[0].close, 12250);
+
   opened.close();
   fs.rmSync(tmpDir, { recursive: true, force: true });
   console.log('sqliteStorage tests passed');

@@ -86,6 +86,17 @@
       stroke-width: 1.5;
     }
 
+    .history-line {
+      fill: none;
+      stroke: #2b6da8;
+      stroke-width: 2;
+    }
+
+    .history-range {
+      stroke: #9abbd6;
+      stroke-width: 1;
+    }
+
     .buy {
       fill: #0f8b4c;
       stroke: #064b2a;
@@ -158,9 +169,11 @@
       </div>
 
       <table>
+        <caption>Trades</caption>
         <thead>
           <tr>
             <th>Date</th>
+            <th>Market Date</th>
             <th>Side</th>
             <th>Price</th>
             <th>Quantity</th>
@@ -169,6 +182,22 @@
           </tr>
         </thead>
         <tbody id="tradeRows"></tbody>
+      </table>
+
+      <table>
+        <caption>Saved Price History</caption>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Open</th>
+            <th>High</th>
+            <th>Low</th>
+            <th>Close</th>
+            <th>Volume</th>
+            <th>Source</th>
+          </tr>
+        </thead>
+        <tbody id="priceHistoryRows"></tbody>
       </table>
     <% } %>
   </div>
@@ -198,6 +227,11 @@
       return new Date(date + 'T00:00:00').getTime();
     }
 
+    function positiveNumber(value) {
+      value = Number(value);
+      return isFinite(value) && value > 0 ? value : null;
+    }
+
     function setText(parent, x, y, value, className, anchor) {
       var text = svgEl('text', {
         x: x,
@@ -219,7 +253,8 @@
         asset.priceUnit,
         'BUY ' + asset.buyCount,
         'SELL ' + asset.sellCount,
-        asset.firstDate + ' to ' + asset.lastDate
+        'Trades ' + asset.firstDate + ' to ' + asset.lastDate,
+        'History ' + (asset.historyCount || 0) + (asset.historyFirstDate ? ' / ' + asset.historyFirstDate + ' to ' + asset.historyLastDate : '')
       ].forEach(function (value) {
         var item = document.createElement('span');
         item.textContent = value;
@@ -240,15 +275,29 @@
       var innerWidth = width - left - right;
       var innerHeight = height - top - bottom;
       var points = asset.points || [];
+      var history = asset.priceHistory || [];
 
-      if (points.length === 0) {
-        setText(svg, 30, 50, 'No price points for this asset.', 'empty');
+      if (points.length === 0 && history.length === 0) {
+        setText(svg, 30, 50, 'No trade or price history points for this asset.', 'empty');
         return;
       }
 
-      var minDate = Math.min.apply(null, points.map(function (p) { return dateValue(p.date); }));
-      var maxDate = Math.max.apply(null, points.map(function (p) { return dateValue(p.date); }));
-      var prices = points.map(function (p) { return Number(p.price); });
+      var dateValues = points.map(function (p) { return dateValue(p.marketDate || p.date); }).concat(history.map(function (row) { return dateValue(row.date); }));
+      var minDate = Math.min.apply(null, dateValues);
+      var maxDate = Math.max.apply(null, dateValues);
+      var prices = points.map(function (p) { return positiveNumber(p.price); }).filter(function (price) { return price !== null; });
+      history.forEach(function (row) {
+        ['open', 'high', 'low', 'close'].forEach(function (key) {
+          var price = positiveNumber(row[key]);
+          if (price !== null) {
+            prices.push(price);
+          }
+        });
+      });
+      if (prices.length === 0) {
+        setText(svg, 30, 50, 'No positive price values for this asset.', 'empty');
+        return;
+      }
       var minPrice = Math.min.apply(null, prices);
       var maxPrice = Math.max.apply(null, prices);
       var pricePadding = minPrice === maxPrice ? Math.max(1, minPrice * 0.1) : (maxPrice - minPrice) * 0.08;
@@ -275,17 +324,39 @@
 
       svg.appendChild(svgEl('line', { x1: left, y1: top, x2: left, y2: height - bottom, class: 'axis' }));
       svg.appendChild(svgEl('line', { x1: left, y1: height - bottom, x2: width - right, y2: height - bottom, class: 'axis' }));
-      setText(svg, left, height - 24, asset.firstDate, 'axis-label');
-      setText(svg, width - right, height - 24, asset.lastDate, 'axis-label', 'end');
+      setText(svg, left, height - 24, new Date(minDate).toISOString().slice(0, 10), 'axis-label');
+      setText(svg, width - right, height - 24, new Date(maxDate).toISOString().slice(0, 10), 'axis-label', 'end');
       setText(svg, left, 18, asset.priceUnit, 'axis-label');
 
+      history.forEach(function (row) {
+        var high = positiveNumber(row.high);
+        var low = positiveNumber(row.low);
+        if (high !== null && low !== null) {
+          var x = xFor(row.date);
+          svg.appendChild(svgEl('line', { x1: x, y1: yFor(high), x2: x, y2: yFor(low), class: 'history-range' }));
+        }
+      });
+
+      if (history.length > 0) {
+        var historyLinePoints = history.filter(function (row) {
+          return positiveNumber(row.close) !== null;
+        }).map(function (row) {
+          return xFor(row.date) + ',' + yFor(positiveNumber(row.close));
+        }).join(' ');
+        if (historyLinePoints) {
+          svg.appendChild(svgEl('polyline', { points: historyLinePoints, class: 'history-line' }));
+        }
+      }
+
       var linePoints = points.map(function (p) {
-        return xFor(p.date) + ',' + yFor(p.price);
+        return xFor(p.marketDate || p.date) + ',' + yFor(p.price);
       }).join(' ');
-      svg.appendChild(svgEl('polyline', { points: linePoints, class: 'series-line' }));
+      if (linePoints) {
+        svg.appendChild(svgEl('polyline', { points: linePoints, class: 'series-line' }));
+      }
 
       points.forEach(function (point) {
-        var x = xFor(point.date);
+        var x = xFor(point.marketDate || point.date);
         var y = yFor(point.price);
         var marker;
         if (point.side === 'SELL') {
@@ -294,11 +365,43 @@
           marker = svgEl('circle', { cx: x, cy: y, r: 5, class: 'buy' });
         }
         var title = svgEl('title');
-        title.textContent = point.date + ' ' + point.side + ' price ' + formatNumber(point.price) +
+        title.textContent = point.date + (point.marketDate && point.marketDate !== point.date ? ' / market ' + point.marketDate : '') +
+          ' ' + point.side + ' price ' + formatNumber(point.price) +
           ' qty ' + formatNumber(point.quantity);
         marker.appendChild(title);
         svg.appendChild(marker);
       });
+    }
+
+    function renderPriceHistoryRows(asset) {
+      var body = document.getElementById('priceHistoryRows');
+      body.innerHTML = '';
+      (asset.priceHistory || []).slice().reverse().forEach(function (row) {
+        var tr = document.createElement('tr');
+        [
+          row.date,
+          formatNumber(row.open),
+          formatNumber(row.high),
+          formatNumber(row.low),
+          formatNumber(row.close),
+          row.volume === null || row.volume === undefined ? '-' : Number(row.volume).toLocaleString(),
+          row.source || ''
+        ].forEach(function (value) {
+          var td = document.createElement('td');
+          td.textContent = value;
+          tr.appendChild(td);
+        });
+        body.appendChild(tr);
+      });
+
+      if (!asset.priceHistory || asset.priceHistory.length === 0) {
+        var tr = document.createElement('tr');
+        var td = document.createElement('td');
+        td.colSpan = 7;
+        td.textContent = 'No saved price history yet. Use Update Prices on the Summary page.';
+        tr.appendChild(td);
+        body.appendChild(tr);
+      }
     }
 
     function renderRows(asset) {
@@ -309,6 +412,7 @@
         var sideClass = point.side === 'BUY' ? 'side-buy' : 'side-sell';
         [
           point.date,
+          point.marketDate || point.date,
           point.side,
           formatNumber(point.price),
           formatNumber(point.quantity),
@@ -317,7 +421,7 @@
         ].forEach(function (value, index) {
           var td = document.createElement('td');
           td.textContent = value;
-          if (index === 1) {
+          if (index === 2) {
             td.className = sideClass;
           }
           tr.appendChild(td);
@@ -335,6 +439,7 @@
       renderSummary(asset);
       renderChart(asset);
       renderRows(asset);
+      renderPriceHistoryRows(asset);
     }
 
     function initTradeChart() {

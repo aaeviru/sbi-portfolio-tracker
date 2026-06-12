@@ -1,5 +1,7 @@
 var assert = require('assert');
-var buildTradeChartData = require('../lib/tradeChart').buildTradeChartData;
+var tradeChart = require('../lib/tradeChart');
+var buildTradeChartData = tradeChart.buildTradeChartData;
+var attachPriceHistoryToTradeChartData = tradeChart.attachPriceHistoryToTradeChartData;
 
 function findAsset(assets, symbol) {
   return assets.filter(function (asset) {
@@ -81,7 +83,42 @@ assert.strictEqual(fund.points[0].price, 12345);
 var usStock = findAsset(assets, 'MCD');
 assert(usStock);
 assert.strictEqual(usStock.priceUnit, 'USD/share');
+assert.strictEqual(usStock.points[0].date, '2026-06-07');
+assert.strictEqual(usStock.points[0].marketDate, '2026-06-06');
 
 assert.strictEqual(findAsset(assets, 'USDJPY'), undefined);
+
+attachPriceHistoryToTradeChartData(assets, [
+  {
+    symbol: '7974.T',
+    priceDate: '2026-06-12',
+    open: 12100,
+    high: 12300,
+    low: 12000,
+    close: 12250,
+    volume: 1000000,
+    currency: 'JPY',
+    source: 'YAHOO_CHART'
+  },
+  {
+    symbol: '7974.T',
+    priceDate: '2026-06-11',
+    open: 11900,
+    high: 12100,
+    low: 0,
+    close: 12050,
+    volume: 900000,
+    currency: 'JPY',
+    source: 'YAHOO_CHART'
+  }
+]);
+
+stock = findAsset(assets, '7974.T');
+assert.strictEqual(stock.historyCount, 2);
+assert.strictEqual(stock.historyFirstDate, '2026-06-11');
+assert.strictEqual(stock.historyLastDate, '2026-06-12');
+assert.strictEqual(stock.priceHistory[0].close, 12050);
+assert.strictEqual(stock.priceHistory[0].low, null);
+assert.strictEqual(stock.priceHistory[1].high, 12300);
 
 console.log('tradeChart tests passed');

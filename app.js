@@ -7,6 +7,7 @@ var TextDecoder = require('util').TextDecoder;
 var buildPortfolioSummary = require('./lib/portfolioSummary').buildPortfolioSummary;
 var buildPortfolioSummaryReport = require('./lib/portfolioSummary').buildPortfolioSummaryReport;
 var buildTradeChartData = require('./lib/tradeChart').buildTradeChartData;
+var attachPriceHistoryToTradeChartData = require('./lib/tradeChart').attachPriceHistoryToTradeChartData;
 var withDb = require('./lib/db').withDb;
 var app = express();
 
@@ -698,6 +699,39 @@ function addGoldTransaction(transactions, goldHolding) {
   return transactions;
 }
 
+function getHistoryBuyDate(tx) {
+  var date = normalizeDate(tx.tradeDateTime || tx.tradeDate);
+  if (!date) {
+    return '';
+  }
+  if (tx.assetType == 'US_STOCK') {
+    return addDays(date, -1);
+  }
+  return date;
+}
+
+function findLatestBuyDatesBySymbol(transactions) {
+  var latestBySymbol = {};
+
+  transactions.forEach(function (tx) {
+    if (tx.side != 'BUY' || (tx.assetType != 'STOCK' && tx.assetType != 'US_STOCK')) {
+      return;
+    }
+
+    var symbol = tx.symbol || tx.code;
+    var date = getHistoryBuyDate(tx);
+    if (!symbol || !date) {
+      return;
+    }
+
+    if (!latestBySymbol[symbol] || date > latestBySymbol[symbol]) {
+      latestBySymbol[symbol] = date;
+    }
+  });
+
+  return latestBySymbol;
+}
+
 function summaryRowsToAssetUpdates(rows) {
   return rows.map(function (row) {
     return {
@@ -717,7 +751,11 @@ function summaryRowsToAssetUpdates(rows) {
             latestPriceDate: '',
             latestPriceFetchedAt: '',
             priceFetchStatus: '',
-            priceFetchError: ''
+            priceFetchError: '',
+            priceHistoryFetchedAt: '',
+            priceHistoryFetchStatus: '',
+            priceHistoryFetchError: '',
+            priceHistoryLatestDate: ''
           }
         },
         upsert: true
@@ -964,6 +1002,224 @@ function fetchYahooChartDailyRates(symbol, pair, range, callback) {
   });
 }
 
+function parseYahooChartDailyPriceHistory(json, asset) {
+  var result = json.chart && json.chart.result && json.chart.result[0];
+  var timestamps = result && result.timestamp;
+  var quote = result && result.indicators && result.indicators.quote && result.indicators.quote[0];
+  var rows = [];
+
+  if (!timestamps || !quote || !quote.close) {
+    return rows;
+  }
+
+  for (var i = 0; i < timestamps.length; i++) {
+    var close = quote.close[i];
+    if (!isFinite(close)) {
+      continue;
+    }
+
+    rows.push({
+      symbol: asset.symbol,
+      assetType: asset.assetType,
+      priceDate: new Date(timestamps[i] * 1000).toISOString().slice(0, 10),
+      currency: asset.assetType == 'US_STOCK' ? 'USD' : 'JPY',
+      open: isFinite(quote.open && quote.open[i]) ? Number(quote.open[i]) : null,
+      high: isFinite(quote.high && quote.high[i]) ? Number(quote.high[i]) : null,
+      low: isFinite(quote.low && quote.low[i]) ? Number(quote.low[i]) : null,
+      close: Number(close),
+      volume: isFinite(quote.volume && quote.volume[i]) ? Number(quote.volume[i]) : null,
+      source: 'YAHOO_CHART',
+      fetchedAt: new Date(),
+      status: 'OK',
+      error: ''
+    });
+  }
+
+  return rows;
+}
+
+function fetchYahooChartDailyPriceHistory(asset, startDate, endDate, callback) {
+  var period1 = Math.floor(new Date(startDate + 'T00:00:00Z').getTime() / 1000);
+  var period2 = Math.floor(new Date(addDays(endDate, 1) + 'T00:00:00Z').getTime() / 1000);
+  var url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(asset.symbol) +
+    '?period1=' + period1 + '&period2=' + period2 + '&interval=1d';
+
+  fetchText(url, function (err, data) {
+    if (err) {
+      callback(err);
+      return;
+    }
+
+    try {
+      var rows = parseYahooChartDailyPriceHistory(JSON.parse(data), asset);
+      if (rows.length === 0) {
+        callback(new Error('Daily price history not found'));
+        return;
+      }
+      callback(null, rows);
+    } catch (parseErr) {
+      callback(parseErr);
+    }
+  });
+}
+
+function addDays(dateText, days) {
+  var date = new Date(dateText + 'T00:00:00Z');
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function maxDateText(a, b) {
+  if (!a) {
+    return b;
+  }
+  if (!b) {
+    return a;
+  }
+  return a > b ? a : b;
+}
+
+function minDateText(a, b) {
+  if (!a) {
+    return b;
+  }
+  if (!b) {
+    return a;
+  }
+  return a < b ? a : b;
+}
+
+function todayText() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function hoursSince(value) {
+  if (!value) {
+    return Infinity;
+  }
+  var time = new Date(value).getTime();
+  if (!isFinite(time)) {
+    return Infinity;
+  }
+  return (Date.now() - time) / (60 * 60 * 1000);
+}
+
+function findLatestPriceHistory(db, symbol, callback) {
+  db.collection('priceHistory').find({ symbol: symbol }).limit(1).toArray(function (err, rows) {
+    if (err) {
+      callback(err);
+      return;
+    }
+    callback(null, rows[0] || null);
+  });
+}
+
+function upsertPriceHistoryRows(db, rows, callback) {
+  var pending = rows.length;
+  if (pending === 0) {
+    callback(null, { inserted: 0, updated: 0, total: 0 });
+    return;
+  }
+
+  var inserted = 0;
+  var updated = 0;
+  rows.forEach(function (row) {
+    db.collection('priceHistory').updateOne(
+      { symbol: row.symbol, priceDate: row.priceDate, source: row.source },
+      { $set: row },
+      { upsert: true },
+      function (err, result) {
+        if (err) {
+          callback(err);
+          callback = function () { };
+          return;
+        }
+        inserted += result.upsertedCount || 0;
+        updated += result.modifiedCount || 0;
+        pending--;
+        if (pending === 0) {
+          callback(null, { inserted: inserted, updated: updated, total: rows.length });
+        }
+      }
+    );
+  });
+}
+
+function updateAssetPriceHistoryStatus(db, asset, fields, callback) {
+  db.collection('assets').updateOne({ symbol: asset.symbol }, { $set: fields }, callback);
+}
+
+function refreshAssetPriceHistory(db, asset, callback) {
+  var isStock = asset.assetType == 'STOCK' || asset.assetType == 'US_STOCK';
+  if (!isStock) {
+    callback(null, { ok: true, symbol: asset.symbol, skipped: true, reason: 'NOT_STOCK' });
+    return;
+  }
+
+  if (hoursSince(asset.priceHistoryFetchedAt) < 12) {
+    callback(null, { ok: true, symbol: asset.symbol, skipped: true, reason: 'COOLDOWN' });
+    return;
+  }
+
+  findLatestPriceHistory(db, asset.symbol, function (findErr, latest) {
+    if (findErr) {
+      callback(findErr);
+      return;
+    }
+
+    var today = todayText();
+    var startDate = latest && latest.priceDate
+      ? addDays(latest.priceDate, 1)
+      : maxDateText(addDays(today, -30), asset.priceHistoryStartDate || '');
+    var endDate = minDateText(today, addDays(startDate, 29));
+    if (startDate > endDate) {
+      updateAssetPriceHistoryStatus(db, asset, {
+        priceHistoryFetchedAt: new Date(),
+        priceHistoryFetchStatus: 'UP_TO_DATE',
+        priceHistoryFetchError: ''
+      }, function (statusErr) {
+        callback(statusErr, { ok: !statusErr, symbol: asset.symbol, skipped: true, reason: 'UP_TO_DATE' });
+      });
+      return;
+    }
+
+    fetchYahooChartDailyPriceHistory(asset, startDate, endDate, function (fetchErr, rows) {
+      if (fetchErr) {
+        updateAssetPriceHistoryStatus(db, asset, {
+          priceHistoryFetchedAt: new Date(),
+          priceHistoryFetchStatus: fetchErr.message == 'HTTP 429' ? 'RATE_LIMITED' : 'ERROR',
+          priceHistoryFetchError: fetchErr.message
+        }, function (statusErr) {
+          callback(statusErr, { ok: false, symbol: asset.symbol, error: fetchErr.message, stop: fetchErr.message == 'HTTP 429' });
+        });
+        return;
+      }
+
+      upsertPriceHistoryRows(db, rows, function (upsertErr, result) {
+        if (upsertErr) {
+          callback(upsertErr);
+          return;
+        }
+
+        updateAssetPriceHistoryStatus(db, asset, {
+          priceHistoryFetchedAt: new Date(),
+          priceHistoryFetchStatus: 'OK',
+          priceHistoryFetchError: '',
+          priceHistoryLatestDate: rows[rows.length - 1].priceDate
+        }, function (statusErr) {
+          callback(statusErr, {
+            ok: !statusErr,
+            symbol: asset.symbol,
+            historyRows: result.total,
+            historyInserted: result.inserted,
+            historyUpdated: result.updated
+          });
+        });
+      });
+    });
+  });
+}
+
 function fetchStockPrice(symbol, callback) {
   fetchYahooChartPrice(symbol, function (err, result) {
     if (err) {
@@ -1109,7 +1365,9 @@ module.exports = {
   parseGoldCsv: parseGoldCsv,
   buildCombinedSummaryTotals: buildCombinedSummaryTotals,
   calculateGoldPricePerGramJpy: calculateGoldPricePerGramJpy,
+  findLatestBuyDatesBySymbol: findLatestBuyDatesBySymbol,
   parseYahooChartDailyRates: parseYahooChartDailyRates,
+  parseYahooChartDailyPriceHistory: parseYahooChartDailyPriceHistory,
   parseFundPriceFromHtml: parseFundPriceFromHtml,
   parseStockPriceFromHtml: parseStockPriceFromHtml
 };
@@ -1191,10 +1449,10 @@ function refreshAssetPrice(db, asset, options, callback) {
 }
 
 function refreshAssetPrices(db, assets, callback) {
-  var pending = assets.length;
   var results = [];
+  var delayMs = 800;
 
-  if (pending === 0) {
+  if (assets.length === 0) {
     callback(null, results);
     return;
   }
@@ -1204,7 +1462,17 @@ function refreshAssetPrices(db, assets, callback) {
   });
 
   function refreshAll(usdJpyRate) {
-    assets.forEach(function (asset) {
+    var index = 0;
+
+    function next() {
+      if (index >= assets.length) {
+        callback(null, results);
+        return;
+      }
+
+      var asset = assets[index];
+      index++;
+
       refreshAssetPrice(db, asset, { usdJpyRate: usdJpyRate }, function (err, result) {
         if (err) {
           results.push({ ok: false, symbol: asset.symbol, error: err.message });
@@ -1212,12 +1480,29 @@ function refreshAssetPrices(db, assets, callback) {
           results.push(result);
         }
 
-        pending--;
-        if (pending === 0) {
-          callback(null, results);
+        if (result && result.error == 'HTTP 429') {
+          callback(null, results.concat([{ ok: false, symbol: '*', error: 'Rate limited; stopped remaining price refreshes' }]));
+          return;
         }
+
+        refreshAssetPriceHistory(db, asset, function (historyErr, historyResult) {
+          if (historyErr) {
+            results.push({ ok: false, symbol: asset.symbol, error: historyErr.message });
+          } else if (historyResult && !historyResult.skipped) {
+            results.push(Object.assign({ type: 'PRICE_HISTORY' }, historyResult));
+          }
+
+          if (historyResult && historyResult.stop) {
+            callback(null, results.concat([{ ok: false, symbol: '*', error: 'Rate limited; stopped remaining history refreshes' }]));
+            return;
+          }
+
+          setTimeout(next, delayMs);
+        });
       });
-    });
+    }
+
+    next();
   }
 
   if (hasUsStock) {
@@ -1527,16 +1812,36 @@ app.get('/trade-chart', function (req, res) {
     }
 
     findAllTransactions(db, function (findErr, docs) {
-      close();
       if (findErr) {
+        close();
         res.status(500).send(findErr.message);
         return;
       }
 
       var assets = buildTradeChartData(docs);
-      res.render('trade-chart.ejs', {
-        assets: assets,
-        chartDataJson: JSON.stringify(assets).replace(/</g, '\\u003c')
+      var symbols = assets.map(function (asset) { return asset.symbol; });
+
+      if (symbols.length === 0) {
+        close();
+        res.render('trade-chart.ejs', {
+          assets: assets,
+          chartDataJson: JSON.stringify(assets).replace(/</g, '\\u003c')
+        });
+        return;
+      }
+
+      db.collection('priceHistory').find({ symbol: { $in: symbols } }).toArray(function (historyErr, historyRows) {
+        close();
+        if (historyErr) {
+          res.status(500).send(historyErr.message);
+          return;
+        }
+
+        attachPriceHistoryToTradeChartData(assets, historyRows);
+        res.render('trade-chart.ejs', {
+          assets: assets,
+          chartDataJson: JSON.stringify(assets).replace(/</g, '\\u003c')
+        });
       });
     });
   });
@@ -1724,11 +2029,14 @@ app.post('/prices/refresh', function (req, res) {
                 activeSymbols[row.symbol] = true;
               }
             });
+            var latestBuyDatesBySymbol = findLatestBuyDatesBySymbol(docs);
 
             var assets = Object.keys(assetsBySymbol)
               .filter(function (symbol) { return activeSymbols[symbol]; })
               .map(function (symbol) {
-                return assetsBySymbol[symbol];
+                return Object.assign({}, assetsBySymbol[symbol], {
+                  priceHistoryStartDate: latestBuyDatesBySymbol[symbol] || ''
+                });
               });
 
             refreshAssetPrices(db, assets, function (refreshErr, results) {
