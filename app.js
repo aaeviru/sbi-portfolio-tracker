@@ -71,6 +71,17 @@ function parseNumber(value) {
   return isNaN(parsed) ? null : parsed;
 }
 
+function detectMoneyCurrency(value, fallback) {
+  value = cleanCsvValue(value);
+  if (/USD|USドル/i.test(value)) {
+    return 'USD';
+  }
+  if (/円|¥/.test(value)) {
+    return 'JPY';
+  }
+  return fallback || 'JPY';
+}
+
 function normalizeDate(value) {
   value = cleanCsvValue(value);
   if (!value) {
@@ -199,7 +210,7 @@ function parseSbiCsv(buffer, sourceFile) {
         settlementDate: normalizeDate(raw['国内受渡日']),
         settlementAmount: parseNumber(raw['受渡金額/決済損益']),
         currency: 'USD',
-        settlementCurrency: 'JPY'
+        settlementCurrency: detectMoneyCurrency(raw['受渡金額/決済損益'], 'USD')
       };
     } else {
       row = {
@@ -744,6 +755,94 @@ function findAssetsBySymbols(db, symbols, callback) {
   });
 }
 
+function upsertFxRate(db, rate, callback) {
+  db.collection('fxRates').updateOne(
+    { pair: rate.pair, rateDate: rate.rateDate },
+    {
+      $set: {
+        pair: rate.pair,
+        rate: rate.rate,
+        rateDate: rate.rateDate,
+        fetchedAt: rate.fetchedAt,
+        status: rate.status,
+        error: rate.error
+      }
+    },
+    { upsert: true },
+    function (err) {
+      callback(err, rate);
+    }
+  );
+}
+
+function findLatestFxRate(db, pair, callback) {
+  db.collection('fxRates').find({ pair: pair }).sort({ rateDate: -1 }).limit(1).toArray(function (err, rows) {
+    if (err) {
+      callback(err);
+      return;
+    }
+    callback(null, rows[0] || null);
+  });
+}
+
+function getLatestFxRate(db, pair, callback) {
+  findLatestFxRate(db, pair, function (findErr, existing) {
+    if (findErr) {
+      callback(findErr);
+      return;
+    }
+
+    if (pair != 'USDJPY') {
+      callback(new Error('Unsupported FX pair: ' + pair));
+      return;
+    }
+
+    fetchUsdJpyDailyRates('7d', function (fetchErr, rates) {
+      if (fetchErr) {
+        if (existing && isFinite(existing.rate)) {
+          existing.status = 'STALE';
+          existing.error = fetchErr.message;
+          callback(null, existing);
+          return;
+        }
+        callback(fetchErr);
+        return;
+      }
+
+      upsertFxRates(db, rates, function (upsertErr) {
+        if (upsertErr) {
+          callback(upsertErr);
+          return;
+        }
+        findLatestFxRate(db, pair, callback);
+      });
+    });
+  });
+}
+
+function upsertFxRates(db, rates, callback) {
+  var pending = rates.length;
+  if (pending === 0) {
+    callback(new Error('No FX rates returned'));
+    return;
+  }
+
+  rates.forEach(function (rate) {
+    upsertFxRate(db, rate, function (err) {
+      if (err) {
+        callback(err);
+        callback = function () { };
+        return;
+      }
+
+      pending--;
+      if (pending === 0) {
+        callback(null);
+      }
+    });
+  });
+}
+
 function normalizeSourceUrl(value) {
   value = cleanCsvValue(value);
   if (!value) {
@@ -807,6 +906,63 @@ function fetchYahooChartPrice(symbol, callback) {
   });
 }
 
+function parseYahooChartDailyRates(json, pair) {
+  var result = json.chart && json.chart.result && json.chart.result[0];
+  var timestamps = result && result.timestamp;
+  var quote = result && result.indicators && result.indicators.quote && result.indicators.quote[0];
+  var rates = [];
+
+  if (!timestamps || !quote || !quote.close) {
+    return rates;
+  }
+
+  for (var i = 0; i < timestamps.length; i++) {
+    var close = quote.close[i];
+    if (!isFinite(close)) {
+      continue;
+    }
+
+    var rateDate = new Date(timestamps[i] * 1000).toISOString().slice(0, 10);
+    rates.push({
+      pair: pair,
+      rateDate: rateDate,
+      rateType: 'DAILY_CLOSE',
+      rate: Number(close),
+      open: isFinite(quote.open && quote.open[i]) ? Number(quote.open[i]) : null,
+      high: isFinite(quote.high && quote.high[i]) ? Number(quote.high[i]) : null,
+      low: isFinite(quote.low && quote.low[i]) ? Number(quote.low[i]) : null,
+      close: Number(close),
+      source: 'YAHOO_CHART',
+      fetchedAt: new Date(),
+      status: 'OK',
+      error: ''
+    });
+  }
+
+  return rates;
+}
+
+function fetchYahooChartDailyRates(symbol, pair, range, callback) {
+  var url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(symbol) + '?range=' + encodeURIComponent(range) + '&interval=1d';
+  fetchText(url, function (err, data) {
+    if (err) {
+      callback(err);
+      return;
+    }
+
+    try {
+      var rates = parseYahooChartDailyRates(JSON.parse(data), pair);
+      if (rates.length === 0) {
+        callback(new Error('Daily FX rates not found'));
+        return;
+      }
+      callback(null, rates);
+    } catch (parseErr) {
+      callback(parseErr);
+    }
+  });
+}
+
 function fetchStockPrice(symbol, callback) {
   fetchYahooChartPrice(symbol, function (err, result) {
     if (err) {
@@ -824,19 +980,53 @@ function fetchGoldPrice(callback) {
       return;
     }
 
-    fetchYahooChartPrice('JPY=X', function (fxErr, fxResult) {
+    fetchUsdJpyRate(function (fxErr, fxResult) {
       if (fxErr) {
         callback(fxErr);
         return;
       }
 
-      var pricePerGramJpy = goldResult.price * fxResult.price / 31.1034768;
+      var pricePerGramJpy = calculateGoldPricePerGramJpy(goldResult.price, fxResult.rate);
+      if (!isFinite(pricePerGramJpy)) {
+        callback(new Error('Gold JPY price not found'));
+        return;
+      }
       callback(null, {
         price: Math.round(pricePerGramJpy * 100) / 100,
         priceDate: goldResult.priceDate || fxResult.priceDate || new Date().toISOString().slice(0, 10)
       });
     });
   });
+}
+
+function calculateGoldPricePerGramJpy(goldUsdPerTroyOunce, usdJpyRate) {
+  if (typeof goldUsdPerTroyOunce != 'number' || !isFinite(goldUsdPerTroyOunce) ||
+    typeof usdJpyRate != 'number' || !isFinite(usdJpyRate)) {
+    return null;
+  }
+  return Math.round((goldUsdPerTroyOunce * usdJpyRate / 31.1034768) * 100) / 100;
+}
+
+function fetchUsdJpyRate(callback) {
+  fetchYahooChartPrice('JPY=X', function (err, result) {
+    if (err) {
+      callback(err);
+      return;
+    }
+
+    callback(null, {
+      pair: 'USDJPY',
+      rate: result.price,
+      rateDate: result.priceDate,
+      fetchedAt: new Date(),
+      status: 'OK',
+      error: ''
+    });
+  });
+}
+
+function fetchUsdJpyDailyRates(range, callback) {
+  fetchYahooChartDailyRates('JPY=X', 'USDJPY', range, callback);
 }
 
 function parseStockPriceFromHtml(html, symbol) {
@@ -917,6 +1107,8 @@ module.exports = {
   parseFxCsv: parseFxCsv,
   parseGoldCsv: parseGoldCsv,
   buildCombinedSummaryTotals: buildCombinedSummaryTotals,
+  calculateGoldPricePerGramJpy: calculateGoldPricePerGramJpy,
+  parseYahooChartDailyRates: parseYahooChartDailyRates,
   parseFundPriceFromHtml: parseFundPriceFromHtml,
   parseStockPriceFromHtml: parseStockPriceFromHtml
 };
@@ -946,7 +1138,13 @@ function fetchFundPrice(asset, callback) {
   });
 }
 
-function refreshAssetPrice(db, asset, callback) {
+function refreshAssetPrice(db, asset, options, callback) {
+  if (typeof options == 'function') {
+    callback = options;
+    options = {};
+  }
+  options = options || {};
+
   var isStock = asset.assetType == 'STOCK' || asset.assetType == 'US_STOCK';
   var isGold = asset.assetType == 'GOLD';
   var fetcher = isGold ? fetchGoldPrice : isStock ? fetchStockPrice : fetchFundPrice;
@@ -972,6 +1170,11 @@ function refreshAssetPrice(db, asset, callback) {
           priceFetchError: ''
         }
       };
+      if (asset.assetType == 'US_STOCK' && options.usdJpyRate && isFinite(options.usdJpyRate.rate)) {
+        update.$set.latestFxRate = options.usdJpyRate.rate;
+        update.$set.latestFxRatePair = options.usdJpyRate.pair;
+        update.$set.latestFxRateDate = options.usdJpyRate.rateDate;
+      }
     }
 
     db.collection('assets').updateOne({ symbol: asset.symbol }, update, function (updateErr) {
@@ -995,20 +1198,38 @@ function refreshAssetPrices(db, assets, callback) {
     return;
   }
 
-  assets.forEach(function (asset) {
-    refreshAssetPrice(db, asset, function (err, result) {
-      if (err) {
-        results.push({ ok: false, symbol: asset.symbol, error: err.message });
-      } else {
-        results.push(result);
-      }
-
-      pending--;
-      if (pending === 0) {
-        callback(null, results);
-      }
-    });
+  var hasUsStock = assets.some(function (asset) {
+    return asset.assetType == 'US_STOCK';
   });
+
+  function refreshAll(usdJpyRate) {
+    assets.forEach(function (asset) {
+      refreshAssetPrice(db, asset, { usdJpyRate: usdJpyRate }, function (err, result) {
+        if (err) {
+          results.push({ ok: false, symbol: asset.symbol, error: err.message });
+        } else {
+          results.push(result);
+        }
+
+        pending--;
+        if (pending === 0) {
+          callback(null, results);
+        }
+      });
+    });
+  }
+
+  if (hasUsStock) {
+    getLatestFxRate(db, 'USDJPY', function (rateErr, usdJpyRate) {
+      if (rateErr) {
+        callback(rateErr);
+        return;
+      }
+      refreshAll(usdJpyRate);
+    });
+  } else {
+    refreshAll(null);
+  }
 }
 
 const findTransactions = function (db, page, pageSize, callback) {

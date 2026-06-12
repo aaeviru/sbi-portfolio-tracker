@@ -26,9 +26,12 @@ transactions
 fx_trades
 gold_holdings
 assets
+fx_rates
 ```
 
 Each table stores the normalized object as JSON for compatibility with the existing calculator code. The transaction and FX tables also keep sort/key columns for upsert and pagination.
+
+`fx_rates` stores one row per pair per date. During price refresh, if US stocks are present, the app fetches the last 7 days of daily `USDJPY` candles from Yahoo symbol `JPY=X` and stores the `DAILY_CLOSE` rows. Summary calculations use the latest stored USD/JPY daily close for US stock JPY market value, falling back to the imported trade FX estimate only when no FX rate is available.
 
 ## Same-Day Buy/Sell Rule
 

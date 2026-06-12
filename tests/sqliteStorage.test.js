@@ -148,6 +148,23 @@ async function main() {
   assert.strictEqual(assets.length, 1);
   assert.strictEqual(assets[0].priceSourceUrl, 'https://example.test');
 
+  var fxRates = db.collection('fxRates');
+  var firstRate = await updateOne(fxRates, { pair: 'USDJPY', rateDate: '2026-06-12' }, { $set: {
+    pair: 'USDJPY',
+    rateDate: '2026-06-12',
+    rate: 155.25,
+    status: 'OK'
+  } }, { upsert: true });
+  var secondRate = await updateOne(fxRates, { pair: 'USDJPY', rateDate: '2026-06-12' }, { $set: {
+    rate: 155.5,
+    status: 'OK'
+  } }, { upsert: true });
+  assert.strictEqual(firstRate.upsertedCount, 1);
+  assert.strictEqual(secondRate.modifiedCount, 1);
+  var latestRates = await toArray(fxRates.find({ pair: 'USDJPY' }).sort({ rateDate: -1 }).limit(1));
+  assert.strictEqual(latestRates.length, 1);
+  assert.strictEqual(latestRates[0].rate, 155.5);
+
   opened.close();
   fs.rmSync(tmpDir, { recursive: true, force: true });
   console.log('sqliteStorage tests passed');

@@ -5,6 +5,8 @@ var parseSbiCsv = priceParsers.parseSbiCsv;
 var parseFxCsv = priceParsers.parseFxCsv;
 var parseGoldCsv = priceParsers.parseGoldCsv;
 var buildCombinedSummaryTotals = priceParsers.buildCombinedSummaryTotals;
+var calculateGoldPricePerGramJpy = priceParsers.calculateGoldPricePerGramJpy;
+var parseYahooChartDailyRates = priceParsers.parseYahooChartDailyRates;
 var parseFundPriceFromHtml = priceParsers.parseFundPriceFromHtml;
 var parseStockPriceFromHtml = priceParsers.parseStockPriceFromHtml;
 
@@ -43,13 +45,20 @@ assert.strictEqual(foreignRows.length, 4);
 var sampleNvdaRow = foreignRows.filter(function (row) {
   return row.code == 'NVDA' && row.quantity == 1 && row.price == 209.635;
 })[0];
+var usdSettlementRow = foreignRows.filter(function (row) {
+  return row.code == 'MCD' && row.quantity == 3;
+})[0];
 assert.ok(sampleNvdaRow);
+assert.ok(usdSettlementRow);
 assert.strictEqual(sampleNvdaRow.assetType, 'US_STOCK');
 assert.strictEqual(sampleNvdaRow.symbol, 'NVDA');
 assert.strictEqual(sampleNvdaRow.side, 'BUY');
 assert.strictEqual(sampleNvdaRow.settlementAmount, 33517);
 assert.strictEqual(sampleNvdaRow.currency, 'USD');
 assert.strictEqual(sampleNvdaRow.settlementCurrency, 'JPY');
+assert.strictEqual(usdSettlementRow.settlementAmount, 854.34);
+assert.strictEqual(usdSettlementRow.currency, 'USD');
+assert.strictEqual(usdSettlementRow.settlementCurrency, 'USD');
 
 var fxRows = parseFxCsv(fs.readFileSync('samples/kessai20260610.csv'), 'kessai20260610.csv');
 assert.ok(fxRows.length > 0);
@@ -63,6 +72,29 @@ assert.strictEqual(goldHolding.source, 'SBI_GOLD');
 assert.strictEqual(goldHolding.rowCount, 13);
 assert.strictEqual(goldHolding.grams, 30.8104);
 assert.strictEqual(goldHolding.buyAmount, 599949);
+assert.strictEqual(calculateGoldPricePerGramJpy(4224.8, 157.5), 21393.3);
+assert.strictEqual(calculateGoldPricePerGramJpy(4224.8, null), null);
+
+var dailyRates = parseYahooChartDailyRates({
+  chart: {
+    result: [{
+      timestamp: [1781107200, 1781193600],
+      indicators: {
+        quote: [{
+          open: [155.1, 155.4],
+          high: [156.2, 156.5],
+          low: [154.8, 155.2],
+          close: [155.9, 156.1]
+        }]
+      }
+    }]
+  }
+}, 'USDJPY');
+assert.strictEqual(dailyRates.length, 2);
+assert.strictEqual(dailyRates[0].pair, 'USDJPY');
+assert.strictEqual(dailyRates[0].rateType, 'DAILY_CLOSE');
+assert.strictEqual(dailyRates[0].rate, 155.9);
+assert.strictEqual(dailyRates[1].close, 156.1);
 
 var combinedTotals = buildCombinedSummaryTotals(
   { marketValue: 1000000, unrealizedPl: 50000, realizedPl: 10000, totalPl: 60000 },

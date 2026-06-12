@@ -299,7 +299,7 @@
                 <td class="number">-</td>
               <% } %>
               <% if (listitem[i].effectiveLatestPrice != null && listitem[i].assetType == 'US_STOCK') { %>
-                <td class="number" title="Estimated with imported FX rate <%= listitem[i].estimatedFxRate %>" data-number="<%= listitem[i].effectiveLatestPrice %>"></td>
+                <td class="number" title="<%= listitem[i].latestFxRate ? 'USD/JPY ' + listitem[i].latestFxRate + ' ' + listitem[i].latestFxRateDate : 'Estimated with imported FX rate ' + listitem[i].estimatedFxRate %>" data-number="<%= listitem[i].effectiveLatestPrice %>"></td>
               <% } else if (listitem[i].effectiveLatestPrice != null) { %>
                 <td class="number" data-number="<%= listitem[i].effectiveLatestPrice %>"></td>
               <% } else { %>

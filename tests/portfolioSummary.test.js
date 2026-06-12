@@ -233,6 +233,98 @@ assert.strictEqual(pricedNvda.effectiveLatestPrice, 33574.8);
 assert.strictEqual(pricedNvda.marketValue, 33574.8);
 assert.strictEqual(pricedNvda.unrealizedPl, 57.8);
 
+var liveFxUsRows = buildPortfolioSummary([
+  {
+    tradeDateTime: '2026-05-28T09:00:00',
+    assetType: 'US_STOCK',
+    code: 'NVDA',
+    symbol: 'NVDA',
+    assetName: 'エヌビディア',
+    side: 'BUY',
+    quantity: 1,
+    unitPrice: 209.635,
+    price: 209.635,
+    settlementAmount: 33517
+  }
+], {
+  NVDA: { latestPrice: 210, latestFxRate: 155, latestFxRatePair: 'USDJPY', latestFxRateDate: '2026-06-12' }
+});
+
+var liveFxNvda = find(liveFxUsRows, 'NVDA');
+assert.strictEqual(liveFxNvda.estimatedFxRate, 159.88);
+assert.strictEqual(liveFxNvda.latestFxRate, 155);
+assert.strictEqual(liveFxNvda.latestFxRatePair, 'USDJPY');
+assert.strictEqual(liveFxNvda.effectiveLatestPrice, 32550);
+assert.strictEqual(liveFxNvda.marketValue, 32550);
+assert.strictEqual(liveFxNvda.unrealizedPl, -967);
+
+var usdSettlementRows = buildPortfolioSummary([
+  {
+    tradeDateTime: '2026-06-12T09:00:00',
+    assetType: 'US_STOCK',
+    code: 'MCD',
+    symbol: 'MCD',
+    assetName: 'マクドナルド',
+    side: 'BUY',
+    quantity: 3,
+    unitPrice: 283.38,
+    price: 283.38,
+    settlementAmount: 854.34,
+    settlementCurrency: 'USD'
+  }
+], {
+  MCD: { latestPrice: 290, latestFxRate: 155, latestFxRatePair: 'USDJPY', latestFxRateDate: '2026-06-12' }
+});
+
+var mcd = find(usdSettlementRows, 'MCD');
+assert.strictEqual(mcd.buyAmount, 132422.7);
+assert.strictEqual(mcd.remainingCost, 132422.7);
+assert.strictEqual(mcd.marketValue, 134850);
+assert.strictEqual(mcd.unrealizedPl, 2427.3);
+
+var legacyUsdSettlementRows = buildPortfolioSummary([
+  {
+    tradeDateTime: '2026-06-12T09:00:00',
+    assetType: 'US_STOCK',
+    code: 'MCD',
+    symbol: 'MCD',
+    assetName: 'マクドナルド',
+    side: 'BUY',
+    quantity: 3,
+    unitPrice: 283.38,
+    price: 283.38,
+    settlementAmount: 854.34,
+    settlementCurrency: 'JPY'
+  }
+], {
+  MCD: { latestPrice: 290, latestFxRate: 155, latestFxRatePair: 'USDJPY', latestFxRateDate: '2026-06-12' }
+});
+
+var legacyMcd = find(legacyUsdSettlementRows, 'MCD');
+assert.strictEqual(legacyMcd.buyAmount, 132422.7);
+assert.strictEqual(legacyMcd.remainingCost, 132422.7);
+assert.strictEqual(legacyMcd.unrealizedPl, 2427.3);
+
+var usdSettlementMissingFxRows = buildPortfolioSummary([
+  {
+    tradeDateTime: '2026-06-12T09:00:00',
+    assetType: 'US_STOCK',
+    code: 'MCD',
+    symbol: 'MCD',
+    assetName: 'マクドナルド',
+    side: 'BUY',
+    quantity: 3,
+    unitPrice: 283.38,
+    price: 283.38,
+    settlementAmount: 854.34,
+    settlementCurrency: 'USD'
+  }
+]);
+
+var missingFxMcd = find(usdSettlementMissingFxRows, 'MCD');
+assert.strictEqual(missingFxMcd.buyAmount, 0);
+assert.strictEqual(missingFxMcd.hasWarning, true);
+
 var goldRows = buildPortfolioSummary([
   {
     tradeDateTime: '9999-12-31T09:00:00',
