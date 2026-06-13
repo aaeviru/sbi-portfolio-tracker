@@ -7,6 +7,8 @@ var parseGoldCsv = priceParsers.parseGoldCsv;
 var buildCombinedSummaryTotals = priceParsers.buildCombinedSummaryTotals;
 var calculateGoldPricePerGramJpy = priceParsers.calculateGoldPricePerGramJpy;
 var findLatestBuyDatesBySymbol = priceParsers.findLatestBuyDatesBySymbol;
+var findOldestBuyDatesBySymbol = priceParsers.findOldestBuyDatesBySymbol;
+var findRemainingLotStartDatesBySymbol = priceParsers.findRemainingLotStartDatesBySymbol;
 var parseYahooChartDailyRates = priceParsers.parseYahooChartDailyRates;
 var parseYahooChartDailyPriceHistory = priceParsers.parseYahooChartDailyPriceHistory;
 var parseFundPriceFromHtml = priceParsers.parseFundPriceFromHtml;
@@ -125,12 +127,33 @@ var latestBuyDates = findLatestBuyDatesBySymbol([
   { assetType: 'STOCK', side: 'BUY', symbol: '7974.T', tradeDate: '2026-06-01' },
   { assetType: 'STOCK', side: 'SELL', symbol: '7974.T', tradeDate: '2026-06-05' },
   { assetType: 'STOCK', side: 'BUY', symbol: '7974.T', tradeDate: '2026-06-10' },
+  { assetType: 'STOCK', side: 'BUY', symbol: 'ISO.T', tradeDateTime: '2026-04-15T09:00:00' },
   { assetType: 'US_STOCK', side: 'BUY', symbol: 'MCD', tradeDate: '2026-06-07' },
+  { assetType: 'US_STOCK', side: 'BUY', symbol: 'BAD', tradeDate: '' },
   { assetType: 'FUND', side: 'BUY', symbol: 'FUND:TOPIX', tradeDate: '2026-06-08' }
 ]);
 assert.strictEqual(latestBuyDates['7974.T'], '2026-06-10');
+assert.strictEqual(latestBuyDates['ISO.T'], '2026-04-15');
 assert.strictEqual(latestBuyDates.MCD, '2026-06-06');
+assert.strictEqual(latestBuyDates.BAD, undefined);
 assert.strictEqual(latestBuyDates['FUND:TOPIX'], undefined);
+
+var oldestBuyDates = findOldestBuyDatesBySymbol([
+  { assetType: 'STOCK', side: 'BUY', symbol: '7936.T', tradeDate: '2025-08-26', tradeDateTime: '2025-08-26T09:00:00', quantity: 100 },
+  { assetType: 'STOCK', side: 'SELL', symbol: '7936.T', tradeDate: '2025-11-13', tradeDateTime: '2025-11-13T15:00:00', quantity: 100 },
+  { assetType: 'STOCK', side: 'BUY', symbol: '7936.T', tradeDate: '2026-06-04', tradeDateTime: '2026-06-04T09:00:00', quantity: 100 },
+  { assetType: 'US_STOCK', side: 'BUY', symbol: 'MCD', tradeDate: '2026-06-07', quantity: 3 }
+]);
+assert.strictEqual(oldestBuyDates['7936.T'], '2025-08-26');
+assert.strictEqual(oldestBuyDates.MCD, '2026-06-06');
+
+var remainingLotDates = findRemainingLotStartDatesBySymbol([
+  { assetType: 'STOCK', side: 'BUY', symbol: '7936.T', tradeDate: '2025-08-26', tradeDateTime: '2025-08-26T09:00:00', quantity: 100 },
+  { assetType: 'STOCK', side: 'BUY', symbol: '7936.T', tradeDate: '2025-11-07', tradeDateTime: '2025-11-07T09:00:00', quantity: 100 },
+  { assetType: 'STOCK', side: 'SELL', symbol: '7936.T', tradeDate: '2025-11-13', tradeDateTime: '2025-11-13T15:00:00', quantity: 100 },
+  { assetType: 'STOCK', side: 'BUY', symbol: '7936.T', tradeDate: '2026-06-04', tradeDateTime: '2026-06-04T09:00:00', quantity: 100 }
+]);
+assert.strictEqual(remainingLotDates['7936.T'], '2025-11-07');
 
 var combinedTotals = buildCombinedSummaryTotals(
   { marketValue: 1000000, unrealizedPl: 50000, realizedPl: 10000, totalPl: 60000 },

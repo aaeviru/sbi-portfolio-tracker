@@ -42,6 +42,15 @@
       font-size: 14px;
     }
 
+    .toolbar select.short-select {
+      min-width: 150px;
+    }
+
+    .toolbar button {
+      padding: 6px 10px;
+      font-size: 14px;
+    }
+
     .summary {
       display: flex;
       flex-wrap: wrap;
@@ -67,7 +76,7 @@
       display: block;
       min-width: 900px;
       width: 100%;
-      height: 420px;
+      height: 460px;
     }
 
     .axis {
@@ -78,6 +87,16 @@
     .grid {
       stroke: #e6e6e6;
       stroke-width: 1;
+    }
+
+    .axis-tick {
+      stroke: #777;
+      stroke-width: 1;
+    }
+
+    .axis-date-label {
+      fill: #222;
+      font-size: 10px;
     }
 
     .series-line {
@@ -160,12 +179,34 @@
           <label for="assetSelect">Asset</label>
           <select id="assetSelect"></select>
         </div>
+        <div>
+          <label for="rangeSelect">Range</label>
+          <select id="rangeSelect" class="short-select">
+            <option value="1m">1 month</option>
+            <option value="6m" selected>6 months</option>
+            <option value="1y">1 year</option>
+            <option value="all">All</option>
+          </select>
+        </div>
+        <div>
+          <label for="tickSelect">X Axis</label>
+          <select id="tickSelect" class="short-select">
+            <option value="week" selected>Every week</option>
+            <option value="month">Every month</option>
+            <option value="year">Every year</option>
+          </select>
+        </div>
+        <div>
+          <label>Window</label>
+          <button type="button" id="olderRangeButton">Previous</button>
+          <button type="button" id="newerRangeButton">Next</button>
+        </div>
       </div>
 
       <div id="assetSummary" class="summary"></div>
 
       <div class="chart-wrap">
-        <svg id="tradeChart" viewBox="0 0 900 420" role="img" aria-label="Buy and sell price chart"></svg>
+        <svg id="tradeChart" viewBox="0 0 900 460" role="img" aria-label="Buy and sell price chart"></svg>
       </div>
 
       <table>
@@ -204,6 +245,7 @@
 
   <script type="text/javascript">
     var chartAssets = <%- chartDataJson %>;
+    var rangePage = 0;
 
     function formatNumber(value) {
       if (value === null || value === undefined || value === '') {
@@ -230,6 +272,101 @@
     function positiveNumber(value) {
       value = Number(value);
       return isFinite(value) && value > 0 ? value : null;
+    }
+
+    function dateTextFromValue(value) {
+      return new Date(value).toISOString().slice(0, 10);
+    }
+
+    function addMonths(dateText, months) {
+      var date = new Date(dateText + 'T00:00:00');
+      date.setMonth(date.getMonth() + months);
+      return date.toISOString().slice(0, 10);
+    }
+
+    function addDays(dateText, days) {
+      var date = new Date(dateText + 'T00:00:00');
+      date.setDate(date.getDate() + days);
+      return date.toISOString().slice(0, 10);
+    }
+
+    function startOfWeek(dateText) {
+      var date = new Date(dateText + 'T00:00:00');
+      var day = date.getDay();
+      date.setDate(date.getDate() - day);
+      return date.toISOString().slice(0, 10);
+    }
+
+    function startOfMonth(dateText) {
+      return dateText.slice(0, 8) + '01';
+    }
+
+    function startOfYear(dateText) {
+      return dateText.slice(0, 4) + '-01-01';
+    }
+
+    function getRangeStart(maxDateText, range) {
+      if (range === '1m') {
+        return addMonths(maxDateText, -1);
+      }
+      if (range === '6m') {
+        return addMonths(maxDateText, -6);
+      }
+      if (range === '1y') {
+        return addMonths(maxDateText, -12);
+      }
+      return '';
+    }
+
+    function getRangeMonths(range) {
+      if (range === '1m') {
+        return 1;
+      }
+      if (range === '6m') {
+        return 6;
+      }
+      if (range === '1y') {
+        return 12;
+      }
+      return 0;
+    }
+
+    function buildAxisTicks(minDateText, maxDateText, interval) {
+      var ticks = [];
+      var cursor;
+      if (interval === 'day') {
+        cursor = minDateText;
+      } else if (interval === 'week') {
+        cursor = startOfWeek(minDateText);
+      } else if (interval === 'month') {
+        cursor = startOfMonth(minDateText);
+      } else {
+        cursor = startOfYear(minDateText);
+      }
+
+      while (cursor <= maxDateText) {
+        if (cursor >= minDateText) {
+          ticks.push(cursor);
+        }
+        if (interval === 'day') {
+          cursor = addDays(cursor, 1);
+        } else if (interval === 'week') {
+          cursor = addDays(cursor, 7);
+        } else if (interval === 'month') {
+          cursor = addMonths(cursor, 1);
+        } else {
+          cursor = addMonths(cursor, 12);
+        }
+      }
+      return ticks;
+    }
+
+    function updateRangeButtons(range, page, startDate, endDate, minDate, maxDate) {
+      var older = document.getElementById('olderRangeButton');
+      var newer = document.getElementById('newerRangeButton');
+      var disabled = range === 'all';
+      older.disabled = disabled || startDate <= minDate;
+      newer.disabled = disabled || page <= 0 || endDate >= maxDate;
     }
 
     function setText(parent, x, y, value, className, anchor) {
@@ -267,26 +404,57 @@
       svg.innerHTML = '';
 
       var width = 900;
-      var height = 420;
+      var height = 460;
       var left = 78;
       var right = 28;
       var top = 28;
-      var bottom = 58;
+      var bottom = 96;
       var innerWidth = width - left - right;
       var innerHeight = height - top - bottom;
       var points = asset.points || [];
       var history = asset.priceHistory || [];
+      var range = document.getElementById('rangeSelect').value;
+      var tickInterval = document.getElementById('tickSelect').value;
 
       if (points.length === 0 && history.length === 0) {
         setText(svg, 30, 50, 'No trade or price history points for this asset.', 'empty');
         return;
       }
 
-      var dateValues = points.map(function (p) { return dateValue(p.marketDate || p.date); }).concat(history.map(function (row) { return dateValue(row.date); }));
+      var allDateValues = points.map(function (p) { return dateValue(p.marketDate || p.date); }).concat(history.map(function (row) { return dateValue(row.date); }));
+      var allMinDateText = dateTextFromValue(Math.min.apply(null, allDateValues));
+      var allMaxDateText = dateTextFromValue(Math.max.apply(null, allDateValues));
+      var rangeMonths = getRangeMonths(range);
+      var rangeEnd = rangeMonths ? addMonths(allMaxDateText, -rangePage * rangeMonths) : allMaxDateText;
+      if (rangeEnd < allMinDateText) {
+        rangeEnd = allMinDateText;
+      }
+      var rangeStart = rangeMonths ? getRangeStart(rangeEnd, range) : '';
+      if (rangeStart && rangeStart < allMinDateText) {
+        rangeStart = allMinDateText;
+      }
+      var visiblePoints = points.filter(function (point) {
+        var d = point.marketDate || point.date;
+        return (!rangeStart || d >= rangeStart) && (!rangeMonths || d <= rangeEnd);
+      });
+      var visibleHistory = history.filter(function (row) {
+        return (!rangeStart || row.date >= rangeStart) && (!rangeMonths || row.date <= rangeEnd);
+      });
+
+      updateRangeButtons(range, rangePage, rangeStart || allMinDateText, rangeEnd, allMinDateText, allMaxDateText);
+
+      if (visiblePoints.length === 0 && visibleHistory.length === 0) {
+        setText(svg, 30, 50, 'No trade or price history points in this range.', 'empty');
+        return;
+      }
+
+      var dateValues = visiblePoints.map(function (p) { return dateValue(p.marketDate || p.date); }).concat(visibleHistory.map(function (row) { return dateValue(row.date); }));
       var minDate = Math.min.apply(null, dateValues);
       var maxDate = Math.max.apply(null, dateValues);
-      var prices = points.map(function (p) { return positiveNumber(p.price); }).filter(function (price) { return price !== null; });
-      history.forEach(function (row) {
+      var minDateText = dateTextFromValue(minDate);
+      var maxDateText = dateTextFromValue(maxDate);
+      var prices = visiblePoints.map(function (p) { return positiveNumber(p.price); }).filter(function (price) { return price !== null; });
+      visibleHistory.forEach(function (row) {
         ['open', 'high', 'low', 'close'].forEach(function (key) {
           var price = positiveNumber(row[key]);
           if (price !== null) {
@@ -324,11 +492,26 @@
 
       svg.appendChild(svgEl('line', { x1: left, y1: top, x2: left, y2: height - bottom, class: 'axis' }));
       svg.appendChild(svgEl('line', { x1: left, y1: height - bottom, x2: width - right, y2: height - bottom, class: 'axis' }));
-      setText(svg, left, height - 24, new Date(minDate).toISOString().slice(0, 10), 'axis-label');
-      setText(svg, width - right, height - 24, new Date(maxDate).toISOString().slice(0, 10), 'axis-label', 'end');
       setText(svg, left, 18, asset.priceUnit, 'axis-label');
 
-      history.forEach(function (row) {
+      var axisTicks = buildAxisTicks(minDateText, maxDateText, tickInterval);
+      var tickLabelStep = Math.max(1, Math.ceil(axisTicks.length / 28));
+      axisTicks.forEach(function (tickDate, index) {
+        var x = xFor(tickDate);
+        svg.appendChild(svgEl('line', {
+          x1: x,
+          y1: height - bottom,
+          x2: x,
+          y2: height - bottom + 6,
+          class: 'axis-tick'
+        }));
+        if (index % tickLabelStep === 0) {
+          var label = setText(svg, x - 4, height - bottom + 56, tickDate, 'axis-date-label', 'end');
+          label.setAttribute('transform', 'rotate(-45 ' + (x - 4) + ' ' + (height - bottom + 56) + ')');
+        }
+      });
+
+      visibleHistory.forEach(function (row) {
         var high = positiveNumber(row.high);
         var low = positiveNumber(row.low);
         if (high !== null && low !== null) {
@@ -337,8 +520,8 @@
         }
       });
 
-      if (history.length > 0) {
-        var historyLinePoints = history.filter(function (row) {
+      if (visibleHistory.length > 0) {
+        var historyLinePoints = visibleHistory.filter(function (row) {
           return positiveNumber(row.close) !== null;
         }).map(function (row) {
           return xFor(row.date) + ',' + yFor(positiveNumber(row.close));
@@ -348,14 +531,14 @@
         }
       }
 
-      var linePoints = points.map(function (p) {
+      var linePoints = visiblePoints.map(function (p) {
         return xFor(p.marketDate || p.date) + ',' + yFor(p.price);
       }).join(' ');
       if (linePoints) {
         svg.appendChild(svgEl('polyline', { points: linePoints, class: 'series-line' }));
       }
 
-      points.forEach(function (point) {
+      visiblePoints.forEach(function (point) {
         var x = xFor(point.marketDate || point.date);
         var y = yFor(point.price);
         var marker;
@@ -455,6 +638,19 @@
         select.appendChild(option);
       });
       select.addEventListener('change', renderSelectedAsset);
+      document.getElementById('rangeSelect').addEventListener('change', function () {
+        rangePage = 0;
+        renderSelectedAsset();
+      });
+      document.getElementById('tickSelect').addEventListener('change', renderSelectedAsset);
+      document.getElementById('olderRangeButton').addEventListener('click', function () {
+        rangePage++;
+        renderSelectedAsset();
+      });
+      document.getElementById('newerRangeButton').addEventListener('click', function () {
+        rangePage = Math.max(0, rangePage - 1);
+        renderSelectedAsset();
+      });
       renderSelectedAsset();
     }
   </script>
