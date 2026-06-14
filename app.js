@@ -736,7 +736,7 @@ function findOldestBuyDatesBySymbol(transactions) {
   var oldestBySymbol = {};
 
   transactions.forEach(function (tx) {
-    if (tx.side != 'BUY' || (tx.assetType != 'STOCK' && tx.assetType != 'US_STOCK')) {
+    if (tx.side != 'BUY' || (tx.assetType != 'STOCK' && tx.assetType != 'US_STOCK' && tx.assetType != 'FUND')) {
       return;
     }
 
@@ -987,10 +987,12 @@ function normalizeSourceUrl(value) {
 }
 
 function fetchText(url, callback) {
+  fetchTextWithHeaders(url, { 'User-Agent': 'Mozilla/5.0 iriyano-price-fetcher' }, callback);
+}
+
+function fetchTextWithHeaders(url, headers, callback) {
   https.get(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 iriyano-price-fetcher'
-    }
+    headers: headers || {}
   }, function (resp) {
     var data = '';
 
@@ -1267,14 +1269,133 @@ function upsertPriceHistoryRows(db, rows, callback) {
   });
 }
 
+function formatYahooBffDate(dateText) {
+  return String(dateText || '').replace(/-/g, '');
+}
+
+function parseJapaneseDateText(value) {
+  var match = String(value || '').match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+  if (!match) {
+    return '';
+  }
+  return match[1] + '-' + ('0' + match[2]).slice(-2) + '-' + ('0' + match[3]).slice(-2);
+}
+
+function parseFundHistoryNumber(value) {
+  value = cleanCsvValue(value).replace(/,/g, '');
+  if (!value || value == '-') {
+    return null;
+  }
+  var parsed = Number(value);
+  return isFinite(parsed) ? parsed : null;
+}
+
+function parseYahooFundPriceHistory(json, asset) {
+  var histories = json && json.histories;
+  if (!Array.isArray(histories)) {
+    return [];
+  }
+
+  return histories.map(function (row) {
+    var priceDate = parseJapaneseDateText(row.date);
+    var price = parseFundHistoryNumber(row.price);
+    if (!priceDate || !isFinite(price)) {
+      return null;
+    }
+    return {
+      symbol: asset.symbol,
+      assetType: asset.assetType,
+      priceDate: priceDate,
+      currency: 'JPY',
+      open: price,
+      high: price,
+      low: price,
+      close: price,
+      volume: null,
+      netAssetsBalance: parseFundHistoryNumber(row.netAssetsBalance),
+      source: 'YAHOO_FUND_HISTORY',
+      fetchedAt: new Date(),
+      status: 'OK',
+      error: ''
+    };
+  }).filter(Boolean);
+}
+
+function getFundCodeFromSourceUrl(sourceUrl) {
+  var match = String(sourceUrl || '').match(/quote\/([^/?#]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
+function fetchYahooFundJwtToken(fundCode, callback) {
+  var url = 'https://finance.yahoo.co.jp/quote/' + encodeURIComponent(fundCode) + '/chart';
+  fetchText(url, function (err, html) {
+    if (err) {
+      callback(err);
+      return;
+    }
+
+    var match = html.match(/"jwtToken":"([^"]+)"/);
+    if (!match) {
+      callback(new Error('Yahoo fund token not found'));
+      return;
+    }
+    callback(null, match[1]);
+  });
+}
+
+function fetchYahooFundPriceHistory(asset, startDate, endDate, callback) {
+  var fundCode = getFundCodeFromSourceUrl(asset.priceSourceUrl);
+  if (!fundCode) {
+    callback(new Error('Mapping required'));
+    return;
+  }
+
+  fetchYahooFundJwtToken(fundCode, function (tokenErr, token) {
+    if (tokenErr) {
+      callback(tokenErr);
+      return;
+    }
+
+    var path = '/bff-pc/v1/main/fund/price/history/' + encodeURIComponent(fundCode) +
+      '?fromDate=' + formatYahooBffDate(startDate) +
+      '&toDate=' + formatYahooBffDate(endDate) +
+      '&timeFrame=daily&page=1&size=100&displayedMaxPage=5';
+    var url = 'https://finance.yahoo.co.jp' + path;
+
+    fetchTextWithHeaders(url, {
+      'User-Agent': 'Mozilla/5.0 iriyano-price-fetcher',
+      'Accept': 'application/json',
+      'Referer': 'https://finance.yahoo.co.jp/quote/' + encodeURIComponent(fundCode) + '/chart',
+      'jwt-token': token
+    }, function (fetchErr, data) {
+      if (fetchErr) {
+        callback(fetchErr);
+        return;
+      }
+
+      try {
+        var rows = parseYahooFundPriceHistory(JSON.parse(data), asset);
+        if (rows.length === 0) {
+          callback(new Error('Fund price history not found'));
+          return;
+        }
+        callback(null, rows);
+      } catch (parseErr) {
+        callback(parseErr);
+      }
+    });
+  });
+}
+
 function updateAssetPriceHistoryStatus(db, asset, fields, callback) {
   db.collection('assets').updateOne({ symbol: asset.symbol }, { $set: fields }, callback);
 }
 
 function refreshAssetPriceHistory(db, asset, callback) {
   var isStock = asset.assetType == 'STOCK' || asset.assetType == 'US_STOCK';
-  if (!isStock) {
-    callback(null, { ok: true, symbol: asset.symbol, skipped: true, reason: 'NOT_STOCK' });
+  var isFund = asset.assetType == 'FUND';
+  if (!isStock && !isFund) {
+    callback(null, { ok: true, symbol: asset.symbol, skipped: true, reason: 'NO_HISTORY_SOURCE' });
     return;
   }
 
@@ -1311,7 +1432,8 @@ function refreshAssetPriceHistory(db, asset, callback) {
       return;
     }
 
-    fetchYahooChartDailyPriceHistory(asset, startDate, endDate, function (fetchErr, rows) {
+    var historyFetcher = isFund ? fetchYahooFundPriceHistory : fetchYahooChartDailyPriceHistory;
+    historyFetcher(asset, startDate, endDate, function (fetchErr, rows) {
       if (fetchErr) {
         updateAssetPriceHistoryStatus(db, asset, {
           priceHistoryFetchedAt: new Date(),
@@ -1496,6 +1618,8 @@ module.exports = {
   findLatestBuyDatesBySymbol: findLatestBuyDatesBySymbol,
   findOldestBuyDatesBySymbol: findOldestBuyDatesBySymbol,
   findRemainingLotStartDatesBySymbol: findRemainingLotStartDatesBySymbol,
+  makeFundPriceHistoryRow: makeFundPriceHistoryRow,
+  parseYahooFundPriceHistory: parseYahooFundPriceHistory,
   parseYahooChartDailyRates: parseYahooChartDailyRates,
   parseYahooChartDailyPriceHistory: parseYahooChartDailyPriceHistory,
   parseFundPriceFromHtml: parseFundPriceFromHtml,
@@ -1525,6 +1649,29 @@ function fetchFundPrice(asset, callback) {
       priceDate: new Date().toISOString().slice(0, 10)
     });
   });
+}
+
+function makeFundPriceHistoryRow(asset, result) {
+  if (asset.assetType != 'FUND' || !isFinite(result.price) || !isValidDateText(result.priceDate)) {
+    return null;
+  }
+
+  var pricePer10000 = Math.round(result.price * 10000 * 10000) / 10000;
+  return {
+    symbol: asset.symbol,
+    assetType: asset.assetType,
+    priceDate: result.priceDate,
+    currency: 'JPY',
+    open: pricePer10000,
+    high: pricePer10000,
+    low: pricePer10000,
+    close: pricePer10000,
+    volume: null,
+    source: 'YAHOO_FUND_HISTORY',
+    fetchedAt: new Date(),
+    status: 'OK',
+    error: ''
+  };
 }
 
 function refreshAssetPrice(db, asset, options, callback) {
@@ -1567,7 +1714,22 @@ function refreshAssetPrice(db, asset, options, callback) {
     }
 
     db.collection('assets').updateOne({ symbol: asset.symbol }, update, function (updateErr) {
-      callback(updateErr, err ? { ok: false, symbol: asset.symbol, error: err.message } : { ok: true, symbol: asset.symbol });
+      if (updateErr || err) {
+        callback(updateErr, err ? { ok: false, symbol: asset.symbol, error: err.message } : null);
+        return;
+      }
+
+      var fundHistoryRow = makeFundPriceHistoryRow(asset, result);
+      if (!fundHistoryRow) {
+        callback(null, { ok: true, symbol: asset.symbol });
+        return;
+      }
+
+      upsertPriceHistoryRows(db, [fundHistoryRow], function (historyErr) {
+        callback(historyErr, historyErr
+          ? { ok: false, symbol: asset.symbol, error: historyErr.message }
+          : { ok: true, symbol: asset.symbol, fundHistoryRows: 1 });
+      });
     });
   };
 

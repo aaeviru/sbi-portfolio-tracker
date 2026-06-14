@@ -15,6 +15,7 @@ The app is built for personal analysis. It is not tax software and does not make
 - Calculate FIFO realized P/L and remaining cost.
 - Refresh latest prices for Japanese stocks, US stocks, mapped funds, and gold.
 - Save daily stock price history with open/high/low/close.
+- Save mapped fund daily NAV snapshots for chart history.
 - Store USD/JPY FX rates for US stock JPY valuation.
 - Show a portfolio summary with market value, unrealized P/L, realized P/L, and allocation percentage.
 - Show transaction pages with pagination.
@@ -82,11 +83,18 @@ Current behavior:
 - Fetches mapped fund prices only when a fund mapping URL/code is saved.
 - Fetches gold price and converts it to JPY per gram.
 - Saves stock daily OHLC price history.
+- Saves mapped fund NAV history as one daily row where open/high/low/close are the same value.
 - Fetches at most a 30-day price-history window per click.
 - Price history starts from the oldest BUY date for each held stock.
 - Uses a delay between asset requests and stops on rate limits.
 
 For US stocks, chart comparison dates are shifted to the US market date when needed, while the original SBI transaction date remains visible in tables.
+
+## Data Source Caveat
+
+Stock price history uses Yahoo-compatible chart data. Fund price history uses Yahoo Japan's frontend fund-history endpoint with a short-lived page token. That fund endpoint is not a documented public API, so it should be treated as best-effort for local personal use.
+
+If Yahoo changes the token, endpoint, or response shape, fund history backfill may fail. The app should keep showing clear fetch errors and can still use mapped fund latest-price snapshots as a fallback.
 
 ## Trade Chart
 
@@ -111,4 +119,3 @@ Current tests cover:
 - stock, fund, US stock, FX, and gold parsing helpers
 - SQLite storage adapter behavior
 - trade chart data preparation
-

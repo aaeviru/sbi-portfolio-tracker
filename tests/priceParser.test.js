@@ -9,6 +9,8 @@ var calculateGoldPricePerGramJpy = priceParsers.calculateGoldPricePerGramJpy;
 var findLatestBuyDatesBySymbol = priceParsers.findLatestBuyDatesBySymbol;
 var findOldestBuyDatesBySymbol = priceParsers.findOldestBuyDatesBySymbol;
 var findRemainingLotStartDatesBySymbol = priceParsers.findRemainingLotStartDatesBySymbol;
+var makeFundPriceHistoryRow = priceParsers.makeFundPriceHistoryRow;
+var parseYahooFundPriceHistory = priceParsers.parseYahooFundPriceHistory;
 var parseYahooChartDailyRates = priceParsers.parseYahooChartDailyRates;
 var parseYahooChartDailyPriceHistory = priceParsers.parseYahooChartDailyPriceHistory;
 var parseFundPriceFromHtml = priceParsers.parseFundPriceFromHtml;
@@ -31,6 +33,27 @@ assert.strictEqual(
   parseFundPriceFromHtml(html, 'https://finance.yahoo.co.jp/quote/01313098'),
   35.8534
 );
+
+var fundHistoryRow = makeFundPriceHistoryRow(
+  { symbol: 'FUND:semi', assetType: 'FUND' },
+  { price: 35.8534, priceDate: '2026-06-15' }
+);
+assert.strictEqual(fundHistoryRow.symbol, 'FUND:semi');
+assert.strictEqual(fundHistoryRow.close, 358534);
+assert.strictEqual(fundHistoryRow.open, 358534);
+assert.strictEqual(fundHistoryRow.source, 'YAHOO_FUND_HISTORY');
+
+var yahooFundHistoryRows = parseYahooFundPriceHistory({
+  histories: [
+    { date: '2026年6月12日', price: '15,638', priceChange: '30', netAssetsBalance: '236,034' },
+    { date: '2026年6月11日', price: '15,608', priceChange: '1', netAssetsBalance: '235,456' }
+  ]
+}, { symbol: 'FUND:bond', assetType: 'FUND' });
+assert.strictEqual(yahooFundHistoryRows.length, 2);
+assert.strictEqual(yahooFundHistoryRows[0].priceDate, '2026-06-12');
+assert.strictEqual(yahooFundHistoryRows[0].close, 15638);
+assert.strictEqual(yahooFundHistoryRows[0].netAssetsBalance, 236034);
+assert.strictEqual(yahooFundHistoryRows[1].low, 15608);
 
 var stockHtml = [
   '<html><body>',
