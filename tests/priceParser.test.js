@@ -6,9 +6,13 @@ var parseFxCsv = priceParsers.parseFxCsv;
 var parseGoldCsv = priceParsers.parseGoldCsv;
 var buildCombinedSummaryTotals = priceParsers.buildCombinedSummaryTotals;
 var calculateGoldPricePerGramJpy = priceParsers.calculateGoldPricePerGramJpy;
+var buildGoldPriceHistoryRows = priceParsers.buildGoldPriceHistoryRows;
+var getGoldHoldingStartDate = priceParsers.getGoldHoldingStartDate;
 var findLatestBuyDatesBySymbol = priceParsers.findLatestBuyDatesBySymbol;
 var findOldestBuyDatesBySymbol = priceParsers.findOldestBuyDatesBySymbol;
+var findActiveQuantitySymbols = priceParsers.findActiveQuantitySymbols;
 var findRemainingLotStartDatesBySymbol = priceParsers.findRemainingLotStartDatesBySymbol;
+var makeLatestPriceHistoryRow = priceParsers.makeLatestPriceHistoryRow;
 var makeFundPriceHistoryRow = priceParsers.makeFundPriceHistoryRow;
 var parseYahooFundPriceHistory = priceParsers.parseYahooFundPriceHistory;
 var parseYahooChartDailyRates = priceParsers.parseYahooChartDailyRates;
@@ -42,6 +46,24 @@ assert.strictEqual(fundHistoryRow.symbol, 'FUND:semi');
 assert.strictEqual(fundHistoryRow.close, 358534);
 assert.strictEqual(fundHistoryRow.open, 358534);
 assert.strictEqual(fundHistoryRow.source, 'YAHOO_FUND_HISTORY');
+
+var usStockHistoryRow = makeLatestPriceHistoryRow(
+  { symbol: 'MCD', assetType: 'US_STOCK' },
+  { price: 287, priceDate: '2026-06-12' }
+);
+assert.strictEqual(usStockHistoryRow.symbol, 'MCD');
+assert.strictEqual(usStockHistoryRow.currency, 'USD');
+assert.strictEqual(usStockHistoryRow.close, 287);
+assert.strictEqual(usStockHistoryRow.source, 'YAHOO_CHART_SNAPSHOT');
+
+var goldSnapshotRow = makeLatestPriceHistoryRow(
+  { symbol: 'GOLD_JPY', assetType: 'GOLD' },
+  { price: 21393.3, priceDate: '2026-06-12' }
+);
+assert.strictEqual(goldSnapshotRow.symbol, 'GOLD_JPY');
+assert.strictEqual(goldSnapshotRow.currency, 'JPY');
+assert.strictEqual(goldSnapshotRow.close, 21393.3);
+assert.strictEqual(goldSnapshotRow.source, 'YAHOO_GOLD_SNAPSHOT');
 
 var yahooFundHistoryRows = parseYahooFundPriceHistory({
   histories: [
@@ -99,8 +121,46 @@ assert.strictEqual(goldHolding.source, 'SBI_GOLD');
 assert.strictEqual(goldHolding.rowCount, 13);
 assert.strictEqual(goldHolding.grams, 30.8104);
 assert.strictEqual(goldHolding.buyAmount, 599949);
+assert.strictEqual(goldHolding.transactions.length, 13);
+assert.strictEqual(goldHolding.transactions[0].assetType, 'GOLD');
+assert.strictEqual(goldHolding.transactions[0].symbol, 'GOLD_JPY');
+assert.strictEqual(goldHolding.transactions[0].tradeDate, '2026-01-30');
+assert.strictEqual(goldHolding.transactions[0].quantity, 2.8016);
+assert.strictEqual(goldHolding.transactions[0].price, 26057);
+assert.strictEqual(goldHolding.transactions[0].fee, 1204);
+assert.strictEqual(goldHolding.transactions[0].settlementAmount, 74204);
+assert.strictEqual(getGoldHoldingStartDate(goldHolding), '2025-04-14');
 assert.strictEqual(calculateGoldPricePerGramJpy(4224.8, 157.5), 21393.3);
 assert.strictEqual(calculateGoldPricePerGramJpy(4224.8, null), null);
+
+var goldHistoryRows = buildGoldPriceHistoryRows([
+  {
+    symbol: 'GC=F',
+    priceDate: '2026-06-12',
+    open: 4200,
+    high: 4225,
+    low: 4180,
+    close: 4224.8,
+    volume: 1200
+  },
+  {
+    symbol: 'GC=F',
+    priceDate: '2026-06-13',
+    open: 4210,
+    high: 4230,
+    low: 4200,
+    close: 4220,
+    volume: 900
+  }
+], [
+  { symbol: 'JPY=X', priceDate: '2026-06-12', close: 157.5 }
+], { symbol: 'GOLD_JPY', assetType: 'GOLD' });
+assert.strictEqual(goldHistoryRows.length, 1);
+assert.strictEqual(goldHistoryRows[0].symbol, 'GOLD_JPY');
+assert.strictEqual(goldHistoryRows[0].currency, 'JPY');
+assert.strictEqual(goldHistoryRows[0].close, 21393.3);
+assert.strictEqual(goldHistoryRows[0].source, 'YAHOO_GOLD_HISTORY');
+assert.strictEqual(goldHistoryRows[0].volume, 1200);
 
 var dailyRates = parseYahooChartDailyRates({
   chart: {
@@ -169,6 +229,16 @@ var oldestBuyDates = findOldestBuyDatesBySymbol([
 ]);
 assert.strictEqual(oldestBuyDates['7936.T'], '2025-08-26');
 assert.strictEqual(oldestBuyDates.MCD, '2026-06-06');
+
+var activeQuantitySymbols = findActiveQuantitySymbols([
+  { assetType: 'US_STOCK', side: 'BUY', symbol: 'MCD', tradeDate: '2026-06-07', quantity: 3, settlementCurrency: 'USD' },
+  { assetType: 'US_STOCK', side: 'SELL', symbol: 'ZERO', tradeDate: '2026-06-07', quantity: 2 },
+  { assetType: 'US_STOCK', side: 'BUY', symbol: 'ZERO', tradeDate: '2026-06-07', quantity: 2 },
+  { assetType: 'GOLD', side: 'BUY', symbol: 'GOLD_JPY', tradeDate: '2025-04-14', quantity: 30.8104 }
+]);
+assert.strictEqual(activeQuantitySymbols.MCD, true);
+assert.strictEqual(activeQuantitySymbols.ZERO, undefined);
+assert.strictEqual(activeQuantitySymbols.GOLD_JPY, true);
 
 var remainingLotDates = findRemainingLotStartDatesBySymbol([
   { assetType: 'STOCK', side: 'BUY', symbol: '7936.T', tradeDate: '2025-08-26', tradeDateTime: '2025-08-26T09:00:00', quantity: 100 },

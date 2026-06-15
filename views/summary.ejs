@@ -32,7 +32,7 @@
     }
 
     table {
-      min-width: 1850px;
+      min-width: 2050px;
       border-collapse: collapse;
       font-size: 14px;
     }
@@ -95,29 +95,6 @@
       padding: 8px 10px;
       border: 1px solid #b7c7d0;
       background: #f6fbfd;
-    }
-
-    .manual-form {
-      display: flex;
-      align-items: end;
-      gap: 10px;
-      flex-wrap: wrap;
-      margin: 12px 0;
-      padding: 12px;
-      border: 1px solid #b7c7d0;
-      background: #f6fbfd;
-    }
-
-    .manual-form label {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      font-size: 13px;
-    }
-
-    .manual-form input {
-      width: 150px;
-      padding: 4px 6px;
     }
 
     .mapping {
@@ -203,6 +180,10 @@
         <strong class="<%= combinedTotals.portfolioTotalPl < 0 ? 'negative' : '' %>" data-number="<%= combinedTotals.portfolioTotalPl %>"></strong>
       </div>
       <div class="total-item">
+        Portfolio Day P/L:
+        <strong class="<%= combinedTotals.portfolioDayPl < 0 ? 'negative' : '' %>" data-number="<%= combinedTotals.portfolioDayPl %>"></strong>
+      </div>
+      <div class="total-item">
         FX Total P/L:
         <strong class="<%= combinedTotals.fxTotalPl < 0 ? 'negative' : '' %>" data-number="<%= combinedTotals.fxTotalPl %>"></strong>
       </div>
@@ -215,18 +196,6 @@
         <strong class="<%= combinedTotals.combinedTotalPl < 0 ? 'negative' : '' %>" data-number="<%= combinedTotals.combinedTotalPl %>"></strong>
       </div>
     </div>
-    <h2>Gold Holding</h2>
-    <form class="manual-form" action="/gold" method="post">
-      <label>
-        Amount Gram
-        <input type="number" name="grams" min="0" step="0.0001" value="<%= goldHolding.grams || 0 %>" required>
-      </label>
-      <label>
-        Buy Amount JPY
-        <input type="number" name="buyAmount" min="0" step="1" value="<%= goldHolding.buyAmount || 0 %>" required>
-      </label>
-      <button type="submit">Update Gold</button>
-    </form>
     <h2>Portfolio Summary</h2>
     <div class="totals">
       <div class="total-item">
@@ -244,6 +213,10 @@
       <div class="total-item">
         Total P/L:
         <strong class="<%= totals.totalPl < 0 ? 'negative' : '' %>" data-number="<%= totals.totalPl %>"></strong>
+      </div>
+      <div class="total-item">
+        Day P/L:
+        <strong class="<%= totals.dayPl < 0 ? 'negative' : '' %>" data-number="<%= totals.dayPl %>"></strong>
       </div>
     </div>
     <div class="table-scroll">
@@ -268,6 +241,9 @@
             <th>Market Value</th>
             <th>Market Value %</th>
             <th>Unrealized P/L</th>
+            <th>Prev Price Date</th>
+            <th>Day P/L</th>
+            <th>Day P/L %</th>
             <th>Price Date / Status</th>
             <th>Fund Mapping</th>
           </tr>
@@ -317,6 +293,17 @@
               <% } %>
               <% if (listitem[i].unrealizedPl != null) { %>
                 <td class="number <%= listitem[i].unrealizedPl < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].unrealizedPl %>"></td>
+              <% } else { %>
+                <td class="number">-</td>
+              <% } %>
+              <td><%= listitem[i].previousPriceDate || '-' %></td>
+              <% if (listitem[i].dayPl != null) { %>
+                <td class="number <%= listitem[i].dayPl < 0 ? 'negative' : '' %>" title="Previous market value: <%= listitem[i].previousMarketValue %>" data-number="<%= listitem[i].dayPl %>"></td>
+              <% } else { %>
+                <td class="number">-</td>
+              <% } %>
+              <% if (listitem[i].dayPlPercent != null) { %>
+                <td class="number <%= listitem[i].dayPlPercent < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].dayPlPercent %>"></td>
               <% } else { %>
                 <td class="number">-</td>
               <% } %>

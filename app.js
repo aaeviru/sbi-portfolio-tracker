@@ -93,6 +93,15 @@ function normalizeDate(value) {
   return value.replace(/\//g, '-');
 }
 
+function normalizeDateTime(value) {
+  value = normalizeDate(value);
+  if (!value) {
+    return '';
+  }
+
+  return value.replace(' ', 'T');
+}
+
 function normalizeSide(action) {
   if (action.indexOf('買') >= 0) {
     return 'BUY';
@@ -411,6 +420,7 @@ function parseGoldCsv(buffer, sourceFile) {
 
   var headers = parseCsvLine(lines[headerIndex]).map(cleanCsvValue);
   var rows = [];
+  var docs = [];
   var grams = 0;
   var buyAmount = 0;
   var importedAt = new Date();
@@ -443,13 +453,64 @@ function parseGoldCsv(buffer, sourceFile) {
     }
 
     var side = raw['取引種別'].indexOf('買付') >= 0 ? 'BUY' : raw['取引種別'].indexOf('売') >= 0 ? 'SELL' : 'OTHER';
-    if (side != 'BUY') {
+    if (side != 'BUY' && side != 'SELL') {
       continue;
     }
 
-    grams += quantity;
-    buyAmount += amount + fee;
+    var tradeDateTime = normalizeDateTime(raw['約定日時'] || raw['注文日時']);
+    var tradeDate = tradeDateTime.slice(0, 10);
+    var sourceHash = crypto.createHash('sha1')
+      .update([
+        raw['受付番号'],
+        raw['約定日時'],
+        raw['取引種別'],
+        raw['約定数量'],
+        raw['約定金額']
+      ].join('|'))
+      .digest('hex');
+    var settlementAmount = side == 'BUY' ? amount + fee : Math.max(0, amount - fee);
+    var price = parseNumber(raw['約定価格/g'] || raw['注文価格/g']);
+
+    if (side == 'BUY') {
+      grams += quantity;
+      buyAmount += amount + fee;
+    } else {
+      grams -= quantity;
+      buyAmount -= settlementAmount;
+    }
+
     rows.push(raw);
+    docs.push({
+      source: 'SBI_GOLD',
+      sourceHash: sourceHash,
+      sourceFile: sourceFile,
+      importedAt: importedAt,
+      raw: raw,
+      tradeDate: tradeDate,
+      tradeTime: tradeDateTime.indexOf('T') >= 0 ? tradeDateTime.split('T')[1] : '',
+      tradeDateTime: tradeDateTime,
+      settlementDate: normalizeDate(raw['受渡日']),
+      assetName: 'Gold',
+      assetType: 'GOLD',
+      code: '',
+      market: '',
+      symbol: 'GOLD_JPY',
+      productCategory: '金',
+      orderType: raw['取引種別'],
+      side: side,
+      action: raw['取引種別'],
+      account: '',
+      taxCategory: '',
+      quantity: quantity,
+      price: isFinite(price) ? price : amount / quantity,
+      unitPrice: isFinite(price) ? price : amount / quantity,
+      priceUnit: 'PER_GRAM',
+      currency: 'JPY',
+      settlementCurrency: 'JPY',
+      fee: fee,
+      tax: 0,
+      settlementAmount: settlementAmount
+    });
   }
 
   return {
@@ -460,7 +521,8 @@ function parseGoldCsv(buffer, sourceFile) {
     grams: Math.round(grams * 10000) / 10000,
     buyAmount: Math.round(buyAmount),
     rowCount: rows.length,
-    rawRows: rows
+    rawRows: rows,
+    transactions: docs
   };
 }
 
@@ -635,6 +697,7 @@ function buildCombinedSummaryTotals(portfolioTotals, fxTotals) {
   var portfolioUnrealizedPl = portfolioTotals.unrealizedPl || 0;
   var portfolioRealizedPl = portfolioTotals.realizedPl || 0;
   var portfolioTotalPl = portfolioTotals.totalPl || 0;
+  var portfolioDayPl = portfolioTotals.dayPl || 0;
   var fxTotalPl = fxTotals.totalPl || 0;
 
   return {
@@ -642,10 +705,22 @@ function buildCombinedSummaryTotals(portfolioTotals, fxTotals) {
     portfolioUnrealizedPl: portfolioUnrealizedPl,
     portfolioRealizedPl: portfolioRealizedPl,
     portfolioTotalPl: portfolioTotalPl,
+    portfolioDayPl: portfolioDayPl,
     fxTotalPl: fxTotalPl,
     combinedRealizedPl: portfolioRealizedPl + fxTotalPl,
     combinedTotalPl: portfolioTotalPl + fxTotalPl
   };
+}
+
+function mapPriceHistoryBySymbol(rows) {
+  var grouped = {};
+  rows.forEach(function (row) {
+    if (!grouped[row.symbol]) {
+      grouped[row.symbol] = [];
+    }
+    grouped[row.symbol].push(row);
+  });
+  return grouped;
 }
 
 function findGoldHolding(db, callback) {
@@ -654,19 +729,38 @@ function findGoldHolding(db, callback) {
   });
 }
 
+function getGoldHoldingStartDate(goldHolding) {
+  var dates = [];
+  (goldHolding.rawRows || []).forEach(function (row) {
+    var date = normalizeDate(row['約定日時'] || row['注文日時'] || row['受渡日']).slice(0, 10);
+    if (isValidDateText(date)) {
+      dates.push(date);
+    }
+  });
+
+  var importedDate = normalizeDate(goldHolding.importedAt).slice(0, 10);
+  if (isValidDateText(importedDate)) {
+    dates.push(importedDate);
+  }
+
+  dates.sort();
+  return dates[0] || '';
+}
+
 function makeGoldTransaction(goldHolding) {
   if (!goldHolding || !isFinite(goldHolding.grams) || goldHolding.grams <= 0) {
     return null;
   }
 
   var buyAmount = isFinite(goldHolding.buyAmount) ? goldHolding.buyAmount : 0;
+  var tradeDate = getGoldHoldingStartDate(goldHolding);
   return {
     source: 'MANUAL',
     sourceFile: '',
     sourceHash: 'manual-gold',
-    tradeDate: '',
+    tradeDate: tradeDate,
     tradeTime: '09:00:00',
-    tradeDateTime: '9999-12-31T09:00:00',
+    tradeDateTime: tradeDate ? tradeDate + 'T09:00:00' : '',
     settlementDate: '',
     assetName: 'Gold',
     assetType: 'GOLD',
@@ -692,6 +786,13 @@ function makeGoldTransaction(goldHolding) {
 }
 
 function addGoldTransaction(transactions, goldHolding) {
+  var hasDetailedGold = transactions.some(function (tx) {
+    return tx.assetType == 'GOLD' && tx.source == 'SBI_GOLD';
+  });
+  if (hasDetailedGold) {
+    return transactions;
+  }
+
   var goldTransaction = makeGoldTransaction(goldHolding);
   if (goldTransaction) {
     return transactions.concat([goldTransaction]);
@@ -736,7 +837,7 @@ function findOldestBuyDatesBySymbol(transactions) {
   var oldestBySymbol = {};
 
   transactions.forEach(function (tx) {
-    if (tx.side != 'BUY' || (tx.assetType != 'STOCK' && tx.assetType != 'US_STOCK' && tx.assetType != 'FUND')) {
+    if (tx.side != 'BUY' || (tx.assetType != 'STOCK' && tx.assetType != 'US_STOCK' && tx.assetType != 'FUND' && tx.assetType != 'GOLD')) {
       return;
     }
 
@@ -752,6 +853,40 @@ function findOldestBuyDatesBySymbol(transactions) {
   });
 
   return oldestBySymbol;
+}
+
+function findActiveQuantitySymbols(transactions) {
+  var qtyBySymbol = {};
+
+  transactions.forEach(function (tx) {
+    if (tx.side != 'BUY' && tx.side != 'SELL') {
+      return;
+    }
+    if (['STOCK', 'US_STOCK', 'FUND', 'GOLD'].indexOf(tx.assetType) < 0) {
+      return;
+    }
+    if (!isFinite(tx.quantity) || tx.quantity <= 0) {
+      return;
+    }
+
+    var symbol = tx.symbol || tx.code || tx.assetName;
+    if (!symbol) {
+      return;
+    }
+
+    if (!qtyBySymbol[symbol]) {
+      qtyBySymbol[symbol] = 0;
+    }
+    qtyBySymbol[symbol] += tx.side == 'BUY' ? tx.quantity : -tx.quantity;
+  });
+
+  var activeSymbols = {};
+  Object.keys(qtyBySymbol).forEach(function (symbol) {
+    if (Math.abs(qtyBySymbol[symbol]) > 0.0000001) {
+      activeSymbols[symbol] = true;
+    }
+  });
+  return activeSymbols;
 }
 
 function compareTransactionDates(a, b) {
@@ -1158,6 +1293,64 @@ function fetchYahooChartDailyPriceHistory(asset, startDate, endDate, callback) {
   });
 }
 
+function buildGoldPriceHistoryRows(goldRows, fxRows, asset) {
+  var fxByDate = {};
+  fxRows.forEach(function (row) {
+    if (row.priceDate && isFinite(row.close)) {
+      fxByDate[row.priceDate] = row;
+    }
+  });
+
+  return goldRows.map(function (goldRow) {
+    var fxRow = fxByDate[goldRow.priceDate];
+    if (!fxRow || !isFinite(fxRow.close) || !isFinite(goldRow.close)) {
+      return null;
+    }
+
+    var fxClose = fxRow.close;
+    return {
+      symbol: asset.symbol,
+      assetType: asset.assetType,
+      priceDate: goldRow.priceDate,
+      currency: 'JPY',
+      open: isFinite(goldRow.open) ? calculateGoldPricePerGramJpy(goldRow.open, fxClose) : null,
+      high: isFinite(goldRow.high) ? calculateGoldPricePerGramJpy(goldRow.high, fxClose) : null,
+      low: isFinite(goldRow.low) ? calculateGoldPricePerGramJpy(goldRow.low, fxClose) : null,
+      close: calculateGoldPricePerGramJpy(goldRow.close, fxClose),
+      volume: isFinite(goldRow.volume) ? goldRow.volume : null,
+      source: 'YAHOO_GOLD_HISTORY',
+      fetchedAt: new Date(),
+      status: 'OK',
+      error: ''
+    };
+  }).filter(function (row) {
+    return row && isFinite(row.close);
+  });
+}
+
+function fetchGoldDailyPriceHistory(asset, startDate, endDate, callback) {
+  fetchYahooChartDailyPriceHistory({ symbol: 'GC=F', assetType: 'US_STOCK' }, startDate, endDate, function (goldErr, goldRows) {
+    if (goldErr) {
+      callback(goldErr);
+      return;
+    }
+
+    fetchYahooChartDailyPriceHistory({ symbol: 'JPY=X', assetType: 'US_STOCK' }, startDate, endDate, function (fxErr, fxRows) {
+      if (fxErr) {
+        callback(fxErr);
+        return;
+      }
+
+      var rows = buildGoldPriceHistoryRows(goldRows, fxRows, asset);
+      if (rows.length === 0) {
+        callback(new Error('Gold daily price history not found'));
+        return;
+      }
+      callback(null, rows);
+    });
+  });
+}
+
 function addDays(dateText, days) {
   var date = new Date(dateText + 'T00:00:00Z');
   if (isNaN(date.getTime())) {
@@ -1394,7 +1587,8 @@ function updateAssetPriceHistoryStatus(db, asset, fields, callback) {
 function refreshAssetPriceHistory(db, asset, callback) {
   var isStock = asset.assetType == 'STOCK' || asset.assetType == 'US_STOCK';
   var isFund = asset.assetType == 'FUND';
-  if (!isStock && !isFund) {
+  var isGold = asset.assetType == 'GOLD';
+  if (!isStock && !isFund && !isGold) {
     callback(null, { ok: true, symbol: asset.symbol, skipped: true, reason: 'NO_HISTORY_SOURCE' });
     return;
   }
@@ -1432,7 +1626,7 @@ function refreshAssetPriceHistory(db, asset, callback) {
       return;
     }
 
-    var historyFetcher = isFund ? fetchYahooFundPriceHistory : fetchYahooChartDailyPriceHistory;
+    var historyFetcher = isGold ? fetchGoldDailyPriceHistory : isFund ? fetchYahooFundPriceHistory : fetchYahooChartDailyPriceHistory;
     historyFetcher(asset, startDate, endDate, function (fetchErr, rows) {
       if (fetchErr) {
         updateAssetPriceHistoryStatus(db, asset, {
@@ -1615,9 +1809,13 @@ module.exports = {
   parseGoldCsv: parseGoldCsv,
   buildCombinedSummaryTotals: buildCombinedSummaryTotals,
   calculateGoldPricePerGramJpy: calculateGoldPricePerGramJpy,
+  buildGoldPriceHistoryRows: buildGoldPriceHistoryRows,
+  getGoldHoldingStartDate: getGoldHoldingStartDate,
   findLatestBuyDatesBySymbol: findLatestBuyDatesBySymbol,
   findOldestBuyDatesBySymbol: findOldestBuyDatesBySymbol,
+  findActiveQuantitySymbols: findActiveQuantitySymbols,
   findRemainingLotStartDatesBySymbol: findRemainingLotStartDatesBySymbol,
+  makeLatestPriceHistoryRow: makeLatestPriceHistoryRow,
   makeFundPriceHistoryRow: makeFundPriceHistoryRow,
   parseYahooFundPriceHistory: parseYahooFundPriceHistory,
   parseYahooChartDailyRates: parseYahooChartDailyRates,
@@ -1651,27 +1849,41 @@ function fetchFundPrice(asset, callback) {
   });
 }
 
-function makeFundPriceHistoryRow(asset, result) {
-  if (asset.assetType != 'FUND' || !isFinite(result.price) || !isValidDateText(result.priceDate)) {
+function makeLatestPriceHistoryRow(asset, result) {
+  if (!isFinite(result.price) || !isValidDateText(result.priceDate)) {
     return null;
   }
 
-  var pricePer10000 = Math.round(result.price * 10000 * 10000) / 10000;
+  var isFund = asset.assetType == 'FUND';
+  var isStock = asset.assetType == 'STOCK' || asset.assetType == 'US_STOCK';
+  var isGold = asset.assetType == 'GOLD';
+  if (!isFund && !isStock && !isGold) {
+    return null;
+  }
+
+  var price = isFund ? Math.round(result.price * 10000 * 10000) / 10000 : result.price;
   return {
     symbol: asset.symbol,
     assetType: asset.assetType,
     priceDate: result.priceDate,
-    currency: 'JPY',
-    open: pricePer10000,
-    high: pricePer10000,
-    low: pricePer10000,
-    close: pricePer10000,
+    currency: asset.assetType == 'US_STOCK' ? 'USD' : 'JPY',
+    open: price,
+    high: price,
+    low: price,
+    close: price,
     volume: null,
-    source: 'YAHOO_FUND_HISTORY',
+    source: isFund ? 'YAHOO_FUND_HISTORY' : isGold ? 'YAHOO_GOLD_SNAPSHOT' : 'YAHOO_CHART_SNAPSHOT',
     fetchedAt: new Date(),
     status: 'OK',
     error: ''
   };
+}
+
+function makeFundPriceHistoryRow(asset, result) {
+  if (asset.assetType != 'FUND') {
+    return null;
+  }
+  return makeLatestPriceHistoryRow(asset, result);
 }
 
 function refreshAssetPrice(db, asset, options, callback) {
@@ -1719,16 +1931,16 @@ function refreshAssetPrice(db, asset, options, callback) {
         return;
       }
 
-      var fundHistoryRow = makeFundPriceHistoryRow(asset, result);
-      if (!fundHistoryRow) {
+      var latestHistoryRow = makeLatestPriceHistoryRow(asset, result);
+      if (!latestHistoryRow) {
         callback(null, { ok: true, symbol: asset.symbol });
         return;
       }
 
-      upsertPriceHistoryRows(db, [fundHistoryRow], function (historyErr) {
+      upsertPriceHistoryRows(db, [latestHistoryRow], function (historyErr) {
         callback(historyErr, historyErr
           ? { ok: false, symbol: asset.symbol, error: historyErr.message }
-          : { ok: true, symbol: asset.symbol, fundHistoryRows: 1 });
+          : { ok: true, symbol: asset.symbol, latestHistoryRows: 1 });
       });
     });
   };
@@ -1999,17 +2211,28 @@ app.post('/import/gold', function (req, res) {
         }
 
         importGoldHolding(db, holding, function (importErr, result) {
-          close();
           if (importErr) {
+            close();
             res.status(500).render('import.ejs', { result: null, error: importErr.message });
             return;
           }
 
-          result.label = 'Gold CSV';
-          result.link = '/summary';
-          result.linkText = 'View portfolio summary';
-          result.extra = 'Gold grams: ' + holding.grams + ', buy amount JPY: ' + holding.buyAmount;
-          res.render('import.ejs', { result: result, error: null });
+          importTransactions(db, holding.transactions || [], function (txErr, txResult) {
+            close();
+            if (txErr) {
+              res.status(500).render('import.ejs', { result: null, error: txErr.message });
+              return;
+            }
+
+            result.label = 'Gold CSV';
+            result.link = '/transactions';
+            result.linkText = 'View imported gold transactions';
+            result.extra = 'Gold grams: ' + holding.grams + ', buy amount JPY: ' + holding.buyAmount +
+              ', transaction rows: ' + txResult.total;
+            result.transactionInserted = txResult.inserted;
+            result.transactionUpdated = txResult.updated;
+            res.render('import.ejs', { result: result, error: null });
+          });
         });
       });
     });
@@ -2110,29 +2333,37 @@ app.get('/trade-chart', function (req, res) {
         return;
       }
 
-      var assets = buildTradeChartData(docs);
-      var symbols = assets.map(function (asset) { return asset.symbol; });
-
-      if (symbols.length === 0) {
-        close();
-        res.render('trade-chart.ejs', {
-          assets: assets,
-          chartDataJson: JSON.stringify(assets).replace(/</g, '\\u003c')
-        });
-        return;
-      }
-
-      db.collection('priceHistory').find({ symbol: { $in: symbols } }).toArray(function (historyErr, historyRows) {
-        close();
-        if (historyErr) {
-          res.status(500).send(historyErr.message);
+      findGoldHolding(db, function (goldErr, goldHolding) {
+        if (goldErr) {
+          close();
+          res.status(500).send(goldErr.message);
           return;
         }
 
-        attachPriceHistoryToTradeChartData(assets, historyRows);
-        res.render('trade-chart.ejs', {
-          assets: assets,
-          chartDataJson: JSON.stringify(assets).replace(/</g, '\\u003c')
+        var assets = buildTradeChartData(addGoldTransaction(docs, goldHolding));
+        var symbols = assets.map(function (asset) { return asset.symbol; });
+
+        if (symbols.length === 0) {
+          close();
+          res.render('trade-chart.ejs', {
+            assets: assets,
+            chartDataJson: JSON.stringify(assets).replace(/</g, '\\u003c')
+          });
+          return;
+        }
+
+        db.collection('priceHistory').find({ symbol: { $in: symbols } }).toArray(function (historyErr, historyRows) {
+          close();
+          if (historyErr) {
+            res.status(500).send(historyErr.message);
+            return;
+          }
+
+          attachPriceHistoryToTradeChartData(assets, historyRows);
+          res.render('trade-chart.ejs', {
+            assets: assets,
+            chartDataJson: JSON.stringify(assets).replace(/</g, '\\u003c')
+          });
         });
       });
     });
@@ -2176,66 +2407,37 @@ app.get('/summary', function (req, res) {
               return;
             }
 
-            var report = buildPortfolioSummaryReport(docs, assetsBySymbol);
-            findAllFxTrades(db, function (fxErr, fxTrades) {
-              close();
-              if (fxErr) {
-                res.status(500).send(fxErr.message);
+            var symbols = summaryRows.map(function (row) { return row.symbol; });
+            db.collection('priceHistory').find({ symbol: { $in: symbols } }).toArray(function (historyErr, priceHistoryRows) {
+              if (historyErr) {
+                close();
+                res.status(500).send(historyErr.message);
                 return;
               }
 
-              var fxSummary = buildFxSummary(fxTrades);
-              res.render('summary.ejs', {
-                listitem: report.rows,
-                totals: report.totals,
-                fxSummary: fxSummary,
-                combinedTotals: buildCombinedSummaryTotals(report.totals, fxSummary.totals),
-                goldHolding: goldHolding,
-                message: req.query.message || ''
+              var report = buildPortfolioSummaryReport(docs, assetsBySymbol, mapPriceHistoryBySymbol(priceHistoryRows));
+              findAllFxTrades(db, function (fxErr, fxTrades) {
+                close();
+                if (fxErr) {
+                  res.status(500).send(fxErr.message);
+                  return;
+                }
+
+                var fxSummary = buildFxSummary(fxTrades);
+                res.render('summary.ejs', {
+                  listitem: report.rows,
+                  totals: report.totals,
+                  fxSummary: fxSummary,
+                  combinedTotals: buildCombinedSummaryTotals(report.totals, fxSummary.totals),
+                  goldHolding: goldHolding,
+                  message: req.query.message || ''
+                });
               });
             });
           });
         });
       });
     });
-  });
-});
-
-app.post('/gold', function (req, res) {
-  var grams = parseNumber(req.body.grams);
-  var buyAmount = parseNumber(req.body.buyAmount);
-
-  if (!isFinite(grams) || grams < 0 || !isFinite(buyAmount) || buyAmount < 0) {
-    res.redirect('/summary?message=' + encodeURIComponent('Gold grams and buy amount must be zero or positive numbers'));
-    return;
-  }
-
-  withDb(function (err, db, close) {
-    if (err) {
-      res.status(500).send(err.message);
-      return;
-    }
-
-    db.collection('goldHoldings').updateOne(
-      { _id: 'gold' },
-      {
-        $set: {
-          grams: grams,
-          buyAmount: buyAmount,
-          updatedAt: new Date()
-        }
-      },
-      { upsert: true },
-      function (updateErr) {
-        close();
-        if (updateErr) {
-          res.status(500).send(updateErr.message);
-          return;
-        }
-
-        res.redirect('/summary?message=' + encodeURIComponent('Saved gold holding'));
-      }
-    );
   });
 });
 
@@ -2315,7 +2517,7 @@ app.post('/prices/refresh', function (req, res) {
               return;
             }
 
-            var activeSymbols = {};
+            var activeSymbols = findActiveQuantitySymbols(docs);
             summaryRows.forEach(function (row) {
               if (isFinite(row.netQty) && Math.abs(row.netQty) > 0.0000001) {
                 activeSymbols[row.symbol] = true;

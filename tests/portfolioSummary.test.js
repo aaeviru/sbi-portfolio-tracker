@@ -168,6 +168,74 @@ assert.strictEqual(reportNintendo.marketValuePercent, 66.67);
 assert.strictEqual(report.rows[0].symbol, '7974.T');
 assert.strictEqual(report.rows[1].symbol, '7936.T');
 
+var dayChangeReport = buildPortfolioSummaryReport([
+  {
+    tradeDateTime: '2026-06-01T09:00:00',
+    assetType: 'STOCK',
+    code: '1111',
+    symbol: '1111.T',
+    assetName: 'Day Change Stock',
+    side: 'BUY',
+    quantity: 10,
+    unitPrice: 90,
+    settlementAmount: 900
+  },
+  {
+    tradeDateTime: '2026-06-01T09:00:00',
+    assetType: 'FUND',
+    symbol: 'FUND:Day Change Fund',
+    assetName: 'Day Change Fund',
+    side: 'BUY',
+    quantity: 10000,
+    unitPrice: 1.4,
+    settlementAmount: 14000
+  },
+  {
+    tradeDateTime: '2026-06-01T09:00:00',
+    assetType: 'US_STOCK',
+    code: 'ABC',
+    symbol: 'ABC',
+    assetName: 'Day Change US',
+    side: 'BUY',
+    quantity: 2,
+    unitPrice: 190,
+    price: 190,
+    settlementAmount: 58900
+  }
+], {
+  '1111.T': { latestPrice: 110, latestPriceDate: '2026-06-12' },
+  'FUND:Day Change Fund': { latestPrice: 1.6, latestPriceDate: '2026-06-12' },
+  ABC: { latestPrice: 210, latestPriceDate: '2026-06-12', latestFxRate: 155 }
+}, {
+  '1111.T': [
+    { symbol: '1111.T', priceDate: '2026-06-12', close: 110 },
+    { symbol: '1111.T', priceDate: '2026-06-11', close: 100 }
+  ],
+  'FUND:Day Change Fund': [
+    { symbol: 'FUND:Day Change Fund', priceDate: '2026-06-12', close: 16000 },
+    { symbol: 'FUND:Day Change Fund', priceDate: '2026-06-11', close: 15000 }
+  ],
+  ABC: [
+    { symbol: 'ABC', priceDate: '2026-06-12', close: 210 },
+    { symbol: 'ABC', priceDate: '2026-06-11', close: 200 }
+  ]
+});
+
+var dayChangeStock = find(dayChangeReport.rows, '1111.T');
+var dayChangeFund = find(dayChangeReport.rows, 'FUND:Day Change Fund');
+var dayChangeUs = find(dayChangeReport.rows, 'ABC');
+assert.strictEqual(dayChangeStock.previousPriceDate, '2026-06-11');
+assert.strictEqual(dayChangeStock.previousMarketValue, 1000);
+assert.strictEqual(dayChangeStock.dayPl, 100);
+assert.strictEqual(dayChangeStock.dayPlPercent, 10);
+assert.strictEqual(dayChangeFund.previousPrice, 1.5);
+assert.strictEqual(dayChangeFund.previousMarketValue, 15000);
+assert.strictEqual(dayChangeFund.dayPl, 1000);
+assert.strictEqual(dayChangeUs.previousEffectivePrice, 31000);
+assert.strictEqual(dayChangeUs.previousMarketValue, 62000);
+assert.strictEqual(dayChangeUs.dayPl, 3100);
+assert.strictEqual(dayChangeReport.totals.dayPl, 4200);
+
 var alphaCodeRows = buildPortfolioSummary([
   {
     tradeDateTime: '2026-06-10T09:00:00',

@@ -62,6 +62,16 @@ var assets = buildTradeChartData([
     quantity: 3,
     price: 287,
     settlementAmount: 854.34
+  },
+  {
+    assetType: 'GOLD',
+    side: 'BUY',
+    symbol: 'GOLD_JPY',
+    assetName: 'Gold',
+    tradeDate: '2026-06-10',
+    quantity: 2,
+    price: 20000,
+    settlementAmount: 40000
   }
 ]);
 
@@ -85,6 +95,12 @@ assert(usStock);
 assert.strictEqual(usStock.priceUnit, 'USD/share');
 assert.strictEqual(usStock.points[0].date, '2026-06-07');
 assert.strictEqual(usStock.points[0].marketDate, '2026-06-06');
+
+var gold = findAsset(assets, 'GOLD_JPY');
+assert(gold);
+assert.strictEqual(gold.displaySymbol, 'GOLD_JPY');
+assert.strictEqual(gold.priceUnit, 'JPY/gram');
+assert.strictEqual(gold.points[0].price, 20000);
 
 assert.strictEqual(findAsset(assets, 'USDJPY'), undefined);
 

@@ -9,15 +9,14 @@ The app is built for personal analysis. It is not tax software and does not make
 - Import SBI domestic stock and investment fund transaction CSV files.
 - Import SBI US stock payment records.
 - Import SBI FX settlement CSV files.
-- Import SBI gold order CSV files.
+- Import SBI gold order CSV files as detailed `GOLD_JPY` trade rows.
 - Store data locally in SQLite.
 - Calculate stock and fund positions together.
 - Calculate FIFO realized P/L and remaining cost.
 - Refresh latest prices for Japanese stocks, US stocks, mapped funds, and gold.
-- Save daily stock price history with open/high/low/close.
-- Save mapped fund daily NAV snapshots for chart history.
+- Save daily stock, fund, and gold price history for charting.
 - Store USD/JPY FX rates for US stock JPY valuation.
-- Show a portfolio summary with market value, unrealized P/L, realized P/L, and allocation percentage.
+- Show a portfolio summary with market value, unrealized P/L, realized P/L, day P/L, and allocation percentage.
 - Show transaction pages with pagination.
 - Show trade charts with saved price history and buy/sell markers.
 
@@ -49,6 +48,26 @@ Open:
 http://localhost/
 ```
 
+## Docker
+
+Build the image:
+
+```powershell
+docker build -t sbi-portfolio-tracker .
+```
+
+Run it with a persistent SQLite data volume:
+
+```powershell
+docker run --rm -p 8080:80 -v sbi-portfolio-data:/app/data sbi-portfolio-tracker
+```
+
+Open:
+
+```text
+http://localhost:8080/
+```
+
 ## Main Pages
 
 - `/import` - upload SBI CSV files for transactions, FX, and gold.
@@ -64,6 +83,8 @@ The importer normalizes:
 - US stocks as symbols like `NVDA`
 - Investment funds as custom fund symbols
 - Gold as `GOLD_JPY`
+
+Gold CSV imports keep aggregate metadata in `gold_holdings`, but individual filled gold orders are also imported into the normal `transactions` table. Those detailed rows are what drive summary FIFO, trade chart buy markers, and gold price-history refresh. The old manual gold entry form has been removed.
 
 SBI CSV files often contain only dates, not exact execution times. The app assigns synthetic ordering:
 
@@ -83,18 +104,22 @@ Current behavior:
 - Fetches mapped fund prices only when a fund mapping URL/code is saved.
 - Fetches gold price and converts it to JPY per gram.
 - Saves stock daily OHLC price history.
-- Saves mapped fund NAV history as one daily row where open/high/low/close are the same value.
+- Saves mapped fund NAV history. Fund NAV is stored per 10,000 units for charting and converted back to unit price for summary valuation.
+- Saves gold daily history by combining `GC=F` gold futures with `JPY=X` USD/JPY and converting each date to JPY per gram.
+- Saves a latest-price snapshot row when the latest quote succeeds but the daily history endpoint has no row yet.
 - Fetches at most a 30-day price-history window per click.
-- Price history starts from the oldest BUY date for each held stock.
+- Price history starts from the oldest BUY date for each held stock, fund, or gold position.
 - Uses a delay between asset requests and stops on rate limits.
 
 For US stocks, chart comparison dates are shifted to the US market date when needed, while the original SBI transaction date remains visible in tables.
 
+Day P/L compares the current JPY market value with the previous saved price-history date. This avoids fake blanks around weekends, holidays, and delayed fund NAV dates.
+
 ## Data Source Caveat
 
-Stock price history uses Yahoo-compatible chart data. Fund price history uses Yahoo Japan's frontend fund-history endpoint with a short-lived page token. That fund endpoint is not a documented public API, so it should be treated as best-effort for local personal use.
+Stock and gold price history use Yahoo-compatible chart data. Gold JPY/gram history also depends on USD/JPY chart data. Fund price history uses Yahoo Japan's frontend fund-history endpoint with a short-lived page token. That fund endpoint is not a documented public API, so it should be treated as best-effort for local personal use.
 
-If Yahoo changes the token, endpoint, or response shape, fund history backfill may fail. The app should keep showing clear fetch errors and can still use mapped fund latest-price snapshots as a fallback.
+If Yahoo changes a token, endpoint, or response shape, history backfill may fail. The app should keep showing clear fetch errors and can still use latest-price snapshots as a fallback.
 
 ## Trade Chart
 
