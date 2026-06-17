@@ -1,5 +1,7 @@
 # SBI Portfolio Tracker
 
+[English](README.md) | [中文](README.zh.md) | [日本語](README.ja.md)
+
 A local Node.js web app for importing SBI Securities CSV files and reviewing portfolio positions, realized/unrealized P/L, price history, FX trades, and gold holdings.
 
 The app is built for personal analysis. It is not tax software and does not make tax-reporting claims.
@@ -70,6 +72,12 @@ admin
 
 The Docker image uses a multi-stage `node:24-alpine` build so the runtime image avoids Debian Perl packages that are commonly flagged by vulnerability scans.
 
+Docker Hub:
+
+```text
+https://hub.docker.com/r/iriyano/sbi-portfolio-tracker
+```
+
 Build the image:
 
 ```powershell
@@ -80,6 +88,12 @@ Run it with a persistent SQLite data volume and login settings:
 
 ```powershell
 docker run --rm -p 8080:80 -v sbi-portfolio-data:/app/data -e SBI_AUTH_PASSWORD=change-this-password -e SBI_JWT_SECRET=change-this-long-random-secret sbi-portfolio-tracker
+```
+
+Or run the published image:
+
+```powershell
+docker run --rm -p 8080:80 -v sbi-portfolio-data:/app/data -e SBI_AUTH_PASSWORD=change-this-password -e SBI_JWT_SECRET=change-this-long-random-secret iriyano/sbi-portfolio-tracker
 ```
 
 Open:
@@ -164,3 +178,7 @@ Current tests cover:
 - stock, fund, US stock, FX, and gold parsing helpers
 - SQLite storage adapter behavior
 - trade chart data preparation
+
+## License
+
+ISC License. See `LICENSE`.
