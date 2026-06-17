@@ -12,6 +12,10 @@ var withDb = require('./lib/db').withDb;
 var app = express();
 
 var PORT = 80;
+var AUTH_COOKIE_NAME = 'sbi_auth';
+var AUTH_PASSWORD = process.env.SBI_AUTH_PASSWORD || 'admin';
+var JWT_SECRET = process.env.SBI_JWT_SECRET || crypto.createHash('sha256').update('local-dev-secret:' + AUTH_PASSWORD).digest('hex');
+var JWT_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 app.set('view engine', 'ejs');
 app.use(express.static('public'));
 const bodyParser = require('body-parser')
@@ -23,6 +27,156 @@ app.use(
 )
 
 app.use(bodyParser.json())
+
+function base64UrlEncode(value) {
+  return Buffer.from(value).toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+}
+
+function base64UrlDecode(value) {
+  value = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+  while (value.length % 4) {
+    value += '=';
+  }
+  return Buffer.from(value, 'base64').toString('utf8');
+}
+
+function signJwt(payload, secret) {
+  var header = { alg: 'HS256', typ: 'JWT' };
+  var encodedHeader = base64UrlEncode(JSON.stringify(header));
+  var encodedPayload = base64UrlEncode(JSON.stringify(payload));
+  var body = encodedHeader + '.' + encodedPayload;
+  var signature = crypto.createHmac('sha256', secret).update(body).digest('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+  return body + '.' + signature;
+}
+
+function verifyJwt(token, secret) {
+  var parts = String(token || '').split('.');
+  if (parts.length != 3) {
+    return null;
+  }
+
+  var body = parts[0] + '.' + parts[1];
+  var expected = crypto.createHmac('sha256', secret).update(body).digest('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+  var actual = parts[2];
+  var expectedBuffer = Buffer.from(expected);
+  var actualBuffer = Buffer.from(actual);
+  if (expectedBuffer.length != actualBuffer.length || !crypto.timingSafeEqual(expectedBuffer, actualBuffer)) {
+    return null;
+  }
+
+  try {
+    var payload = JSON.parse(base64UrlDecode(parts[1]));
+    if (payload.exp && Math.floor(Date.now() / 1000) > payload.exp) {
+      return null;
+    }
+    return payload;
+  } catch (err) {
+    return null;
+  }
+}
+
+function parseCookies(cookieHeader) {
+  var cookies = {};
+  String(cookieHeader || '').split(';').forEach(function (part) {
+    var index = part.indexOf('=');
+    if (index < 0) {
+      return;
+    }
+    var name = part.slice(0, index).trim();
+    var value = part.slice(index + 1).trim();
+    if (name) {
+      cookies[name] = decodeURIComponent(value);
+    }
+  });
+  return cookies;
+}
+
+function makeAuthToken() {
+  var now = Math.floor(Date.now() / 1000);
+  return signJwt({
+    sub: 'sbi-local-user',
+    iat: now,
+    exp: now + JWT_MAX_AGE_SECONDS
+  }, JWT_SECRET);
+}
+
+function normalizeNextPath(value) {
+  value = String(value || '/summary');
+  if (value.charAt(0) != '/' || value.indexOf('//') === 0) {
+    return '/summary';
+  }
+  return value;
+}
+
+function isAuthenticated(req) {
+  var cookies = parseCookies(req.headers.cookie);
+  return !!verifyJwt(cookies[AUTH_COOKIE_NAME], JWT_SECRET);
+}
+
+function authMiddleware(req, res, next) {
+  if (req.path == '/login' || req.path == '/logout') {
+    next();
+    return;
+  }
+
+  if (isAuthenticated(req)) {
+    next();
+    return;
+  }
+
+  res.redirect('/login?next=' + encodeURIComponent(req.originalUrl || '/summary'));
+}
+
+app.get('/login', function (req, res) {
+  var nextPath = normalizeNextPath(req.query.next);
+  if (isAuthenticated(req)) {
+    res.redirect(nextPath);
+    return;
+  }
+
+  res.render('login.ejs', {
+    error: req.query.error || '',
+    next: nextPath
+  });
+});
+
+app.post('/login', function (req, res) {
+  var password = cleanCsvValue(req.body.password);
+  var nextPath = normalizeNextPath(req.body.next);
+  var expected = Buffer.from(AUTH_PASSWORD);
+  var actual = Buffer.from(password);
+  var ok = expected.length == actual.length && crypto.timingSafeEqual(expected, actual);
+  if (!ok) {
+    res.redirect('/login?error=' + encodeURIComponent('Invalid password') + '&next=' + encodeURIComponent(nextPath));
+    return;
+  }
+
+  var secure = req.secure || req.headers['x-forwarded-proto'] == 'https';
+  var cookie = AUTH_COOKIE_NAME + '=' + encodeURIComponent(makeAuthToken()) +
+    '; Max-Age=' + JWT_MAX_AGE_SECONDS +
+    '; Path=/' +
+    '; HttpOnly' +
+    '; SameSite=Lax' +
+    (secure ? '; Secure' : '');
+  res.setHeader('Set-Cookie', cookie);
+  res.redirect(nextPath);
+});
+
+app.post('/logout', function (req, res) {
+  res.setHeader('Set-Cookie', AUTH_COOKIE_NAME + '=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax');
+  res.redirect('/login');
+});
+
+app.use(authMiddleware);
 
 function parseCsvLine(line) {
   var values = [];
@@ -1804,6 +1958,9 @@ function parseFundPriceFromHtml(html, sourceUrl) {
 }
 
 module.exports = {
+  signJwt: signJwt,
+  verifyJwt: verifyJwt,
+  normalizeNextPath: normalizeNextPath,
   parseSbiCsv: parseSbiCsv,
   parseFxCsv: parseFxCsv,
   parseGoldCsv: parseGoldCsv,

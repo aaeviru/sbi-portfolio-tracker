@@ -48,6 +48,24 @@ Open:
 http://localhost/
 ```
 
+## Login
+
+The app protects portfolio pages with a simple password login and an HTTP-only JWT cookie.
+
+Set these environment variables before running the app:
+
+```powershell
+$env:SBI_AUTH_PASSWORD="change-this-password"
+$env:SBI_JWT_SECRET="change-this-long-random-secret"
+npm start
+```
+
+If they are not set, the local development password defaults to:
+
+```text
+admin
+```
+
 ## Docker
 
 Build the image:
@@ -56,10 +74,10 @@ Build the image:
 docker build -t sbi-portfolio-tracker .
 ```
 
-Run it with a persistent SQLite data volume:
+Run it with a persistent SQLite data volume and login settings:
 
 ```powershell
-docker run --rm -p 8080:80 -v sbi-portfolio-data:/app/data sbi-portfolio-tracker
+docker run --rm -p 8080:80 -v sbi-portfolio-data:/app/data -e SBI_AUTH_PASSWORD=change-this-password -e SBI_JWT_SECRET=change-this-long-random-secret sbi-portfolio-tracker
 ```
 
 Open:
