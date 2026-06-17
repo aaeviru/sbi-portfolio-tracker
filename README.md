@@ -68,6 +68,8 @@ admin
 
 ## Docker
 
+The Docker image uses a multi-stage `node:24-alpine` build so the runtime image avoids Debian Perl packages that are commonly flagged by vulnerability scans.
+
 Build the image:
 
 ```powershell
