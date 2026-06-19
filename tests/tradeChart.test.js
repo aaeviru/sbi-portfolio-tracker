@@ -2,6 +2,7 @@ var assert = require('assert');
 var tradeChart = require('../lib/tradeChart');
 var buildTradeChartData = tradeChart.buildTradeChartData;
 var attachPriceHistoryToTradeChartData = tradeChart.attachPriceHistoryToTradeChartData;
+var sortTradeChartAssetsBySummaryRows = tradeChart.sortTradeChartAssetsBySummaryRows;
 
 function findAsset(assets, symbol) {
   return assets.filter(function (asset) {
@@ -104,6 +105,14 @@ assert.strictEqual(gold.points[0].price, 20000);
 
 assert.strictEqual(findAsset(assets, 'USDJPY'), undefined);
 
+sortTradeChartAssetsBySummaryRows(assets, [
+  { symbol: 'MCD', marketValuePercent: 50 },
+  { symbol: 'FUND:TOPIX', marketValuePercent: 30 },
+  { symbol: '7974.T', marketValuePercent: 20 },
+  { symbol: 'GOLD_JPY', marketValuePercent: 10 }
+]);
+assert.deepStrictEqual(assets.map(function (asset) { return asset.symbol; }), ['MCD', 'FUND:TOPIX', '7974.T', 'GOLD_JPY']);
+
 attachPriceHistoryToTradeChartData(assets, [
   {
     symbol: '7974.T',
@@ -126,6 +135,70 @@ attachPriceHistoryToTradeChartData(assets, [
     volume: 900000,
     currency: 'JPY',
     source: 'YAHOO_CHART'
+  },
+  {
+    symbol: '7974.T',
+    priceDate: '2026-06-12',
+    open: 12000,
+    high: 12000,
+    low: 12000,
+    close: 12000,
+    volume: null,
+    currency: 'JPY',
+    source: 'YAHOO_CHART_SNAPSHOT'
+  },
+  {
+    symbol: 'FUND:TOPIX',
+    assetType: 'FUND',
+    priceDate: '2026-06-14',
+    open: 91955,
+    high: 91955,
+    low: 91955,
+    close: 91955,
+    volume: null,
+    currency: 'JPY',
+    source: 'FUND_MAPPING'
+  },
+  {
+    symbol: 'FUND:TOPIX',
+    assetType: 'FUND',
+    priceDate: '2026-06-14',
+    open: 91955,
+    high: 91955,
+    low: 91955,
+    close: 91955,
+    volume: null,
+    currency: 'JPY',
+    source: 'YAHOO_FUND_HISTORY',
+    netAssetsBalance: 236034,
+    fetchedAt: '2026-06-14T09:00:00.000Z'
+  },
+  {
+    symbol: 'FUND:TOPIX',
+    assetType: 'FUND',
+    priceDate: '2026-06-14',
+    open: 92000,
+    high: 92000,
+    low: 92000,
+    close: 92000,
+    volume: null,
+    currency: 'JPY',
+    source: 'YAHOO_FUND_HISTORY',
+    netAssetsBalance: 236500,
+    fetchedAt: '2026-06-14T10:00:00.000Z'
+  },
+  {
+    symbol: 'FUND:TOPIX',
+    assetType: 'FUND',
+    priceDate: '2026-06-17',
+    open: 92000,
+    high: 92000,
+    low: 92000,
+    close: 92000,
+    volume: null,
+    currency: 'JPY',
+    source: 'YAHOO_FUND_HISTORY',
+    fetchedAt: '2026-06-17T10:00:00.000Z'
   }
 ]);
 
@@ -136,5 +209,11 @@ assert.strictEqual(stock.historyLastDate, '2026-06-12');
 assert.strictEqual(stock.priceHistory[0].close, 12050);
 assert.strictEqual(stock.priceHistory[0].low, null);
 assert.strictEqual(stock.priceHistory[1].high, 12300);
+
+fund = findAsset(assets, 'FUND:TOPIX');
+assert.strictEqual(fund.historyCount, 1);
+assert.strictEqual(fund.priceHistory[0].date, '2026-06-14');
+assert.strictEqual(fund.priceHistory[0].source, 'YAHOO_FUND_HISTORY');
+assert.strictEqual(fund.priceHistory[0].close, 92000);
 
 console.log('tradeChart tests passed');

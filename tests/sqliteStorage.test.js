@@ -7,6 +7,7 @@ var tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sbi-portfolio-sqlite-'));
 process.env.SBI_PORTFOLIO_DB_PATH = path.join(tmpDir, 'test.sqlite');
 
 var withDb = require('../lib/db').withDb;
+var upsertPriceHistoryRows = require('../app').upsertPriceHistoryRows;
 
 function openDb() {
   return new Promise(function (resolve, reject) {
@@ -75,6 +76,30 @@ function findOne(collection, filter) {
         reject(err);
       } else {
         resolve(row);
+      }
+    });
+  });
+}
+
+function deleteMany(collection, filter) {
+  return new Promise(function (resolve, reject) {
+    collection.deleteMany(filter, function (err, result) {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(result);
+      }
+    });
+  });
+}
+
+function upsertHistoryRows(db, rows) {
+  return new Promise(function (resolve, reject) {
+    upsertPriceHistoryRows(db, rows, function (err, result) {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(result);
       }
     });
   });
@@ -188,6 +213,35 @@ async function main() {
   var historyRows = await toArray(priceHistory.find({ symbol: '7974.T' }).limit(1));
   assert.strictEqual(historyRows.length, 1);
   assert.strictEqual(historyRows[0].close, 12250);
+
+  await updateOne(priceHistory, { symbol: '7936.T', priceDate: '2026-06-18', source: 'YAHOO_CHART_SNAPSHOT' }, { $set: {
+    symbol: '7936.T',
+    assetType: 'STOCK',
+    priceDate: '2026-06-18',
+    close: 7166,
+    source: 'YAHOO_CHART_SNAPSHOT'
+  } }, { upsert: true });
+  await upsertHistoryRows(db, [{
+    symbol: '7936.T',
+    assetType: 'STOCK',
+    priceDate: '2026-06-18',
+    currency: 'JPY',
+    open: 7100,
+    high: 7200,
+    low: 7000,
+    close: 7150,
+    volume: 1000,
+    source: 'YAHOO_CHART',
+    status: 'OK'
+  }]);
+  var replacedHistoryRows = await toArray(priceHistory.find({ symbol: '7936.T' }));
+  assert.strictEqual(replacedHistoryRows.length, 1);
+  assert.strictEqual(replacedHistoryRows[0].source, 'YAHOO_CHART');
+  assert.strictEqual(replacedHistoryRows[0].close, 7150);
+
+  var deletedRates = await deleteMany(fxRates, { pair: 'USDJPY', rateDate: '2026-06-12' });
+  assert.strictEqual(deletedRates.deletedCount, 1);
+  assert.strictEqual((await toArray(fxRates.find({ pair: 'USDJPY' }))).length, 0);
 
   opened.close();
   fs.rmSync(tmpDir, { recursive: true, force: true });

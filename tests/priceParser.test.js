@@ -12,6 +12,9 @@ var findLatestBuyDatesBySymbol = priceParsers.findLatestBuyDatesBySymbol;
 var findOldestBuyDatesBySymbol = priceParsers.findOldestBuyDatesBySymbol;
 var findActiveQuantitySymbols = priceParsers.findActiveQuantitySymbols;
 var findRemainingLotStartDatesBySymbol = priceParsers.findRemainingLotStartDatesBySymbol;
+var isPriceHistoryBoundsRow = priceParsers.isPriceHistoryBoundsRow;
+var getHistoryEndLimitDate = priceParsers.getHistoryEndLimitDate;
+var getNextPriceHistoryWindow = priceParsers.getNextPriceHistoryWindow;
 var makeLatestPriceHistoryRow = priceParsers.makeLatestPriceHistoryRow;
 var makeFundPriceHistoryRow = priceParsers.makeFundPriceHistoryRow;
 var parseYahooFundPriceHistory = priceParsers.parseYahooFundPriceHistory;
@@ -45,7 +48,7 @@ var fundHistoryRow = makeFundPriceHistoryRow(
 assert.strictEqual(fundHistoryRow.symbol, 'FUND:semi');
 assert.strictEqual(fundHistoryRow.close, 358534);
 assert.strictEqual(fundHistoryRow.open, 358534);
-assert.strictEqual(fundHistoryRow.source, 'YAHOO_FUND_HISTORY');
+assert.strictEqual(fundHistoryRow.source, 'YAHOO_FUND_SNAPSHOT');
 
 var usStockHistoryRow = makeLatestPriceHistoryRow(
   { symbol: 'MCD', assetType: 'US_STOCK' },
@@ -64,6 +67,28 @@ assert.strictEqual(goldSnapshotRow.symbol, 'GOLD_JPY');
 assert.strictEqual(goldSnapshotRow.currency, 'JPY');
 assert.strictEqual(goldSnapshotRow.close, 21393.3);
 assert.strictEqual(goldSnapshotRow.source, 'YAHOO_GOLD_SNAPSHOT');
+assert.strictEqual(isPriceHistoryBoundsRow({ source: 'YAHOO_CHART_SNAPSHOT' }, { assetType: 'STOCK' }), false);
+assert.strictEqual(isPriceHistoryBoundsRow({ source: 'YAHOO_CHART' }, { assetType: 'STOCK' }), true);
+assert.strictEqual(isPriceHistoryBoundsRow({ assetType: 'FUND', source: 'YAHOO_FUND_HISTORY' }, { assetType: 'FUND' }), false);
+assert.strictEqual(isPriceHistoryBoundsRow({ assetType: 'FUND', source: 'YAHOO_FUND_HISTORY', netAssetsBalance: 100 }, { assetType: 'FUND' }), true);
+assert.strictEqual(getHistoryEndLimitDate({ assetType: 'GOLD' }, '2026-06-18'), '2026-06-17');
+assert.strictEqual(getHistoryEndLimitDate({ assetType: 'STOCK' }, '2026-06-18'), '2026-06-18');
+assert.deepStrictEqual(
+  getNextPriceHistoryWindow({ dates: ['2026-06-10', '2026-06-11'] }, '2026-06-01', '2026-06-18'),
+  { startDate: '2026-06-12', endDate: '2026-06-18', reason: 'FORWARD' }
+);
+assert.deepStrictEqual(
+  getNextPriceHistoryWindow({ dates: ['2026-06-10', '2026-06-11', '2026-06-12', '2026-06-16', '2026-06-18'] }, '2026-06-01', '2026-06-18'),
+  { startDate: '2026-06-01', endDate: '2026-06-18', reason: 'GAP' }
+);
+assert.deepStrictEqual(
+  getNextPriceHistoryWindow({ dates: ['2026-06-10', '2026-06-11', '2026-06-12'] }, '2026-06-01', '2026-06-12'),
+  { startDate: '2026-06-01', endDate: '2026-06-09', reason: 'BACKFILL' }
+);
+assert.deepStrictEqual(
+  getNextPriceHistoryWindow({ dates: ['2026-06-01', '2026-06-02', '2026-06-03'] }, '2026-06-01', '2026-06-03'),
+  { startDate: '', endDate: '', reason: 'UP_TO_DATE' }
+);
 
 var yahooFundHistoryRows = parseYahooFundPriceHistory({
   histories: [
@@ -155,12 +180,16 @@ var goldHistoryRows = buildGoldPriceHistoryRows([
 ], [
   { symbol: 'JPY=X', priceDate: '2026-06-12', close: 157.5 }
 ], { symbol: 'GOLD_JPY', assetType: 'GOLD' });
-assert.strictEqual(goldHistoryRows.length, 1);
+assert.strictEqual(goldHistoryRows.length, 2);
 assert.strictEqual(goldHistoryRows[0].symbol, 'GOLD_JPY');
 assert.strictEqual(goldHistoryRows[0].currency, 'JPY');
 assert.strictEqual(goldHistoryRows[0].close, 21393.3);
 assert.strictEqual(goldHistoryRows[0].source, 'YAHOO_GOLD_HISTORY');
 assert.strictEqual(goldHistoryRows[0].volume, 1200);
+assert.strictEqual(goldHistoryRows[1].priceDate, '2026-06-13');
+assert.strictEqual(goldHistoryRows[1].close, calculateGoldPricePerGramJpy(4220, 157.5));
+assert.strictEqual(goldHistoryRows[1].status, 'FX_FALLBACK');
+assert.strictEqual(goldHistoryRows[1].fxRateDate, '2026-06-12');
 
 var dailyRates = parseYahooChartDailyRates({
   chart: {
@@ -205,6 +234,25 @@ assert.strictEqual(dailyPrices[0].currency, 'USD');
 assert.strictEqual(dailyPrices[0].open, 280.1);
 assert.strictEqual(dailyPrices[1].close, 286.1);
 assert.strictEqual(dailyPrices[1].volume, 1200000);
+
+var dailyPricesWithNull = parseYahooChartDailyPriceHistory({
+  chart: {
+    result: [{
+      timestamp: [1781107200, 1781193600],
+      indicators: {
+        quote: [{
+          open: [280.1, 281.4],
+          high: [286.2, 287.5],
+          low: [279.8, 280.2],
+          close: [null, 286.1],
+          volume: [1000000, 1200000]
+        }]
+      }
+    }]
+  }
+}, { symbol: 'MCD', assetType: 'US_STOCK' });
+assert.strictEqual(dailyPricesWithNull.length, 1);
+assert.strictEqual(dailyPricesWithNull[0].priceDate, '2026-06-11');
 
 var latestBuyDates = findLatestBuyDatesBySymbol([
   { assetType: 'STOCK', side: 'BUY', symbol: '7974.T', tradeDate: '2026-06-01' },

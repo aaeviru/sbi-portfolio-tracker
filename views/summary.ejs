@@ -163,10 +163,17 @@
     <h1>Portfolio Summary</h1>
     <div class="toolbar">
       <form action="/prices/refresh" method="post">
-        <button type="submit">Update Prices</button>
+        <button type="submit" formmethod="post" formaction="/prices/refresh">Update Prices</button>
       </form>
       <% if (message) { %>
         <span class="message"><%= message %></span>
+      <% } %>
+      <% if (refreshStatus && refreshStatus.status == 'RUNNING') { %>
+        <span class="message">Price refresh running since <%= refreshStatus.startedAt %></span>
+      <% } else if (refreshStatus && refreshStatus.status == 'COMPLETED') { %>
+        <span class="message">Last price refresh finished. OK: <%= refreshStatus.ok %>, Failed/skipped: <%= refreshStatus.failed %></span>
+      <% } else if (refreshStatus && refreshStatus.status == 'ERROR') { %>
+        <span class="message">Last price refresh failed: <%= refreshStatus.error %></span>
       <% } %>
     </div>
     <h2>Combined Summary</h2>

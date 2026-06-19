@@ -163,6 +163,23 @@
       color: #b22a20;
       font-weight: bold;
     }
+
+    .table-pager {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 8px 0 18px;
+      font-size: 13px;
+    }
+
+    .table-pager button {
+      padding: 4px 8px;
+      font-size: 13px;
+    }
+
+    .table-pager button:disabled {
+      color: #999;
+    }
   </style>
 </head>
 
@@ -224,6 +241,7 @@
         </thead>
         <tbody id="tradeRows"></tbody>
       </table>
+      <div id="tradePager" class="table-pager"></div>
 
       <table>
         <caption>Saved Price History</caption>
@@ -236,16 +254,22 @@
             <th>Close</th>
             <th>Volume</th>
             <th>Source</th>
+            <th>Status</th>
+            <th>Error</th>
           </tr>
         </thead>
         <tbody id="priceHistoryRows"></tbody>
       </table>
+      <div id="priceHistoryPager" class="table-pager"></div>
     <% } %>
   </div>
 
   <script type="text/javascript">
     var chartAssets = <%- chartDataJson %>;
     var rangePage = 0;
+    var tablePageSize = 30;
+    var tradeRowsPage = 0;
+    var priceHistoryRowsPage = 0;
 
     function formatNumber(value) {
       if (value === null || value === undefined || value === '') {
@@ -556,10 +580,58 @@
       });
     }
 
+    function paginateRows(rows, page) {
+      var totalRows = rows.length;
+      var totalPages = Math.max(1, Math.ceil(totalRows / tablePageSize));
+      var safePage = Math.min(Math.max(page, 0), totalPages - 1);
+      return {
+        rows: rows.slice(safePage * tablePageSize, safePage * tablePageSize + tablePageSize),
+        page: safePage,
+        totalPages: totalPages,
+        totalRows: totalRows
+      };
+    }
+
+    function renderPager(elementId, pageInfo, onPageChange) {
+      var pager = document.getElementById(elementId);
+      pager.innerHTML = '';
+      if (!pageInfo || pageInfo.totalRows <= tablePageSize) {
+        return;
+      }
+
+      var previous = document.createElement('button');
+      previous.type = 'button';
+      previous.textContent = 'Previous';
+      previous.disabled = pageInfo.page <= 0;
+      previous.addEventListener('click', function () {
+        onPageChange(pageInfo.page - 1);
+      });
+
+      var status = document.createElement('span');
+      status.textContent = 'Page ' + (pageInfo.page + 1) + ' / ' + pageInfo.totalPages +
+        ' (' + pageInfo.totalRows.toLocaleString() + ' rows)';
+
+      var next = document.createElement('button');
+      next.type = 'button';
+      next.textContent = 'Next';
+      next.disabled = pageInfo.page >= pageInfo.totalPages - 1;
+      next.addEventListener('click', function () {
+        onPageChange(pageInfo.page + 1);
+      });
+
+      pager.appendChild(previous);
+      pager.appendChild(status);
+      pager.appendChild(next);
+    }
+
     function renderPriceHistoryRows(asset) {
       var body = document.getElementById('priceHistoryRows');
       body.innerHTML = '';
-      (asset.priceHistory || []).slice().reverse().forEach(function (row) {
+      var rows = (asset.priceHistory || []).slice().reverse();
+      var pageInfo = paginateRows(rows, priceHistoryRowsPage);
+      priceHistoryRowsPage = pageInfo.page;
+
+      pageInfo.rows.forEach(function (row) {
         var tr = document.createElement('tr');
         [
           row.date,
@@ -568,7 +640,9 @@
           formatNumber(row.low),
           formatNumber(row.close),
           row.volume === null || row.volume === undefined ? '-' : Number(row.volume).toLocaleString(),
-          row.source || ''
+          row.source || '',
+          row.status || '',
+          row.error || (row.fxRateDate && row.fxRateDate !== row.date ? 'FX ' + row.fxRateDate : '')
         ].forEach(function (value) {
           var td = document.createElement('td');
           td.textContent = value;
@@ -580,17 +654,25 @@
       if (!asset.priceHistory || asset.priceHistory.length === 0) {
         var tr = document.createElement('tr');
         var td = document.createElement('td');
-        td.colSpan = 7;
+        td.colSpan = 9;
         td.textContent = 'No saved price history yet. Use Update Prices on the Summary page.';
         tr.appendChild(td);
         body.appendChild(tr);
       }
+
+      renderPager('priceHistoryPager', pageInfo, function (page) {
+        priceHistoryRowsPage = page;
+        renderPriceHistoryRows(asset);
+      });
     }
 
     function renderRows(asset) {
       var body = document.getElementById('tradeRows');
       body.innerHTML = '';
-      (asset.points || []).forEach(function (point) {
+      var pageInfo = paginateRows(asset.points || [], tradeRowsPage);
+      tradeRowsPage = pageInfo.page;
+
+      pageInfo.rows.forEach(function (point) {
         var tr = document.createElement('tr');
         var sideClass = point.side === 'BUY' ? 'side-buy' : 'side-sell';
         [
@@ -611,6 +693,11 @@
         });
         body.appendChild(tr);
       });
+
+      renderPager('tradePager', pageInfo, function (page) {
+        tradeRowsPage = page;
+        renderRows(asset);
+      });
     }
 
     function renderSelectedAsset() {
@@ -619,6 +706,8 @@
       if (!asset) {
         return;
       }
+      tradeRowsPage = 0;
+      priceHistoryRowsPage = 0;
       renderSummary(asset);
       renderChart(asset);
       renderRows(asset);
