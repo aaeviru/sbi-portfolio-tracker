@@ -1,0 +1,199 @@
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" type="text/css" href="/menu.css">
+  <script type="text/javascript">
+    function navbarHighLight() {
+      var now = document.getElementById("history");
+      if (now) {
+        now.className += " active";
+      }
+    }
+
+    function formatNumber(value) {
+      return Number(value || 0).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+    }
+
+    function totalsEqual(prefix, totals) {
+      return Number(totals.combinedTotalPl || 0) == Number(prefix.combinedTotalPl || 0)
+        && Number(totals.combinedRealizedPl || 0) == Number(prefix.combinedRealizedPl || 0)
+        && Number(totals.portfolioMarketValue || 0) == Number(prefix.portfolioMarketValue || 0);
+    }
+
+    window.onload = function () {
+      navbarHighLight();
+      var cells = document.querySelectorAll('[data-number]');
+      for (var i = 0; i < cells.length; i++) {
+        cells[i].textContent = formatNumber(cells[i].getAttribute('data-number'));
+      }
+    };
+  </script>
+  <style>
+    .content {
+      margin: 24px;
+      font-family: sans-serif;
+    }
+
+    .note {
+      margin: 12px 0;
+      padding: 8px 10px;
+      border: 1px solid #b7c7d0;
+      background: #eef7fb;
+    }
+
+    table {
+      min-width: 1180px;
+      border-collapse: collapse;
+      font-size: 14px;
+      margin-bottom: 28px;
+    }
+
+    th,
+    td {
+      border: 1px solid #c7d9e3;
+      padding: 4px 6px;
+      white-space: nowrap;
+    }
+
+    th {
+      background: #2f6f91;
+      color: #fff;
+      text-align: left;
+    }
+
+    tbody tr:nth-child(odd) {
+      background: #b9d7e5;
+    }
+
+    tbody tr:nth-child(even) {
+      background: #dedede;
+    }
+
+    .number {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .negative {
+      color: #f00;
+    }
+
+    .ok {
+      color: #117a2f;
+      font-weight: bold;
+    }
+
+    .warn {
+      color: #9b5b00;
+      font-weight: bold;
+    }
+
+    .table-scroll {
+      max-width: 100%;
+      overflow-x: auto;
+      border: 1px solid #c7d9e3;
+    }
+  </style>
+</head>
+
+<body>
+  <%- include('partials/menu'); -%>
+  <div class="content">
+    <h1>Combined Summary History</h1>
+    <div class="note">
+      Current month and current year are calculated through <%= today %> and should equal the live Combined Summary.
+      Older rows are period cutoffs using the currently saved latest prices.
+    </div>
+
+    <% function renderRows(rows) { %>
+      <% for (var i = 0; i < rows.length; i++) { %>
+        <% var totals = rows[i].totals; %>
+        <% var currentMatches = rows[i].isCurrent
+          && totals.combinedTotalPl == currentCombinedTotals.combinedTotalPl
+          && totals.combinedRealizedPl == currentCombinedTotals.combinedRealizedPl
+          && totals.portfolioMarketValue == currentCombinedTotals.portfolioMarketValue; %>
+        <tr>
+          <td><%= rows[i].label %><%= rows[i].isCurrent ? ' (current)' : '' %></td>
+          <td><%= rows[i].endDate %></td>
+          <td class="number" data-number="<%= rows[i].txCount %>"></td>
+          <td class="number" data-number="<%= rows[i].fxTxCount %>"></td>
+          <td class="number <%= totals.portfolioMarketValue < 0 ? 'negative' : '' %>" data-number="<%= totals.portfolioMarketValue %>"></td>
+          <td class="number <%= totals.portfolioUnrealizedPl < 0 ? 'negative' : '' %>" data-number="<%= totals.portfolioUnrealizedPl %>"></td>
+          <td class="number <%= totals.portfolioRealizedPl < 0 ? 'negative' : '' %>" data-number="<%= totals.portfolioRealizedPl %>"></td>
+          <td class="number <%= totals.portfolioTotalPl < 0 ? 'negative' : '' %>" data-number="<%= totals.portfolioTotalPl %>"></td>
+          <td class="number <%= totals.fxTotalPl < 0 ? 'negative' : '' %>" data-number="<%= totals.fxTotalPl %>"></td>
+          <td class="number <%= totals.combinedRealizedPl < 0 ? 'negative' : '' %>" data-number="<%= totals.combinedRealizedPl %>"></td>
+          <td class="number <%= totals.combinedTotalPl < 0 ? 'negative' : '' %>" data-number="<%= totals.combinedTotalPl %>"></td>
+          <% if (rows[i].combinedTotalPlDiff != null) { %>
+            <td class="number <%= rows[i].combinedTotalPlDiff < 0 ? 'negative' : '' %>" data-number="<%= rows[i].combinedTotalPlDiff %>"></td>
+          <% } else { %>
+            <td>-</td>
+          <% } %>
+          <% if (rows[i].isCurrent) { %>
+            <td class="<%= currentMatches ? 'ok' : 'warn' %>"><%= currentMatches ? 'MATCH' : 'DIFF' %></td>
+          <% } else { %>
+            <td>-</td>
+          <% } %>
+        </tr>
+      <% } %>
+    <% } %>
+
+    <h2>Monthly</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Month</th>
+            <th>Through</th>
+            <th>Tx Count</th>
+            <th>FX Tx Count</th>
+            <th>Market Value</th>
+            <th>Portfolio Unrealized P/L</th>
+            <th>Portfolio Realized P/L</th>
+            <th>Portfolio Total P/L</th>
+            <th>FX Total P/L</th>
+            <th>Combined Realized P/L</th>
+            <th>Combined Total P/L</th>
+            <th>Combined Total P/L Diff</th>
+            <th>Current Check</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% renderRows(history.monthly); %>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Yearly</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Year</th>
+            <th>Through</th>
+            <th>Tx Count</th>
+            <th>FX Tx Count</th>
+            <th>Market Value</th>
+            <th>Portfolio Unrealized P/L</th>
+            <th>Portfolio Realized P/L</th>
+            <th>Portfolio Total P/L</th>
+            <th>FX Total P/L</th>
+            <th>Combined Realized P/L</th>
+            <th>Combined Total P/L</th>
+            <th>Combined Total P/L Diff</th>
+            <th>Current Check</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% renderRows(history.yearly); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+
+</html>

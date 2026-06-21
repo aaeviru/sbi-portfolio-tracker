@@ -241,17 +241,19 @@
             <th>Sell Amount</th>
             <th>Net Qty</th>
             <th>Net Invested</th>
-            <th>FIFO Realized P/L</th>
             <th>Remaining Cost</th>
             <th>Current Price</th>
             <th>JPY Price</th>
             <th>Market Value</th>
             <th>Market Value %</th>
-            <th>Unrealized P/L</th>
             <th>Prev Price Date</th>
+            <th>Price Date / Status</th>
+            <th>FIFO Realized P/L</th>
+            <th>Unrealized P/L</th>
+            <th>Unrealized P/L %</th>
             <th>Day P/L</th>
             <th>Day P/L %</th>
-            <th>Price Date / Status</th>
+            <th>Total P/L</th>
             <th>Fund Mapping</th>
           </tr>
         </thead>
@@ -274,7 +276,6 @@
               <td class="number <%= listitem[i].sellAmount < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].sellAmount %>"></td>
               <td class="number <%= listitem[i].netQty < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].netQty %>"></td>
               <td class="number <%= listitem[i].netInvested < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].netInvested %>"></td>
-              <td class="number <%= listitem[i].fifoRealizedPl < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].fifoRealizedPl %>"></td>
               <td class="number <%= listitem[i].remainingCost < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].remainingCost %>"></td>
               <% if (listitem[i].latestPrice != null) { %>
                 <td class="number" data-number="<%= listitem[i].latestPrice %>"></td>
@@ -298,12 +299,24 @@
               <% } else { %>
                 <td class="number">-</td>
               <% } %>
+              <td><%= listitem[i].previousPriceDate || '-' %></td>
+              <td class="status" title="<%= listitem[i].priceFetchError %>">
+                <%= listitem[i].latestPriceDate || listitem[i].priceFetchStatus || '-' %>
+                <% if (listitem[i].priceFetchError) { %>
+                  : <%= listitem[i].priceFetchError %>
+                <% } %>
+              </td>
+              <td class="number <%= listitem[i].fifoRealizedPl < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].fifoRealizedPl %>"></td>
               <% if (listitem[i].unrealizedPl != null) { %>
                 <td class="number <%= listitem[i].unrealizedPl < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].unrealizedPl %>"></td>
               <% } else { %>
                 <td class="number">-</td>
               <% } %>
-              <td><%= listitem[i].previousPriceDate || '-' %></td>
+              <% if (listitem[i].unrealizedPlPercent != null) { %>
+                <td class="number <%= listitem[i].unrealizedPlPercent < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].unrealizedPlPercent %>"></td>
+              <% } else { %>
+                <td class="number">-</td>
+              <% } %>
               <% if (listitem[i].dayPl != null) { %>
                 <td class="number <%= listitem[i].dayPl < 0 ? 'negative' : '' %>" title="Previous market value: <%= listitem[i].previousMarketValue %>" data-number="<%= listitem[i].dayPl %>"></td>
               <% } else { %>
@@ -314,12 +327,11 @@
               <% } else { %>
                 <td class="number">-</td>
               <% } %>
-              <td class="status" title="<%= listitem[i].priceFetchError %>">
-                <%= listitem[i].latestPriceDate || listitem[i].priceFetchStatus || '-' %>
-                <% if (listitem[i].priceFetchError) { %>
-                  : <%= listitem[i].priceFetchError %>
-                <% } %>
-              </td>
+              <% if (listitem[i].totalPl != null) { %>
+                <td class="number <%= listitem[i].totalPl < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].totalPl %>"></td>
+              <% } else { %>
+                <td class="number">-</td>
+              <% } %>
               <td>
                 <% if (listitem[i].assetType == 'FUND') { %>
                   <form class="mapping" action="/assets/mapping" method="post">

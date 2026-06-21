@@ -21,6 +21,18 @@ The app is built for personal analysis. It is not tax software and does not make
 - Show a portfolio summary with market value, unrealized P/L, realized P/L, day P/L, and allocation percentage.
 - Show transaction pages with pagination.
 - Show trade charts with saved price history and buy/sell markers.
+- Show combined monthly/yearly summary history with Combined Total P/L diff.
+
+## Version 0.1.0
+
+This first release is a local-first SBI portfolio tracker with:
+
+- CSV imports for SBI domestic transactions, US stock payment records, FX settlements, and gold orders.
+- SQLite storage for local personal use.
+- Portfolio summary with FIFO realized P/L, unrealized P/L, day P/L, allocation percentage, and combined portfolio/FX totals.
+- Price refresh and saved price history for stocks, mapped funds, gold, and USD/JPY valuation.
+- Trade chart and combined summary history pages.
+- Simple JWT login and Docker support.
 
 ## Requirements
 
@@ -108,6 +120,7 @@ http://localhost:8080/
 - `/transactions` - view imported normalized transactions.
 - `/summary` - view portfolio summary and update prices.
 - `/trade-chart` - view price history with buy/sell markers.
+- `/history` - view monthly/yearly combined summary history and P/L changes.
 
 ## Import Notes
 

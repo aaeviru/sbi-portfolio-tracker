@@ -127,6 +127,8 @@ assert.strictEqual(asics.remainingCost, 170000);
 assert.strictEqual(asics.fifoRealizedPl, 15000);
 assert.strictEqual(asics.marketValue, 225000);
 assert.strictEqual(asics.unrealizedPl, 55000);
+assert.strictEqual(asics.unrealizedPlPercent, 32.35);
+assert.strictEqual(asics.totalPl, 70000);
 assert.strictEqual(asics.latestPrice, 1500);
 
 var report = buildPortfolioSummaryReport([
@@ -164,7 +166,11 @@ assert.strictEqual(report.totals.unrealizedPl, 150000);
 assert.strictEqual(report.totals.realizedPl, 0);
 assert.strictEqual(report.totals.totalPl, 150000);
 assert.strictEqual(reportAsics.marketValuePercent, 33.33);
+assert.strictEqual(reportAsics.unrealizedPlPercent, 50);
+assert.strictEqual(reportAsics.totalPl, 50000);
 assert.strictEqual(reportNintendo.marketValuePercent, 66.67);
+assert.strictEqual(reportNintendo.unrealizedPlPercent, 50);
+assert.strictEqual(reportNintendo.totalPl, 100000);
 assert.strictEqual(report.rows[0].symbol, '7974.T');
 assert.strictEqual(report.rows[1].symbol, '7936.T');
 
