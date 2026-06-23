@@ -22,6 +22,7 @@
 - 显示带分页的交易列表。
 - 显示包含价格历史和买入/卖出标记的交易图表。
 - 显示按月/按年的合并汇总历史，以及 Combined Total P/L 差异。
+- 从本地 SQLite 快照生成每日投资组合报告；支持 OpenAI API 直接生成，也支持复制英文、中文或日文 prompt 到 ChatGPT。
 
 ## 版本 0.1.0
 
@@ -32,6 +33,7 @@
 - 投资组合摘要，包括 FIFO 已实现盈亏、未实现盈亏、日盈亏、配置比例，以及投资组合/FX 合并汇总。
 - 刷新股票、已映射基金、黄金价格，并保存价格历史；支持 USD/JPY 估值。
 - 交易图表和合并汇总历史页面。
+- Daily Report 页面，支持 API 生成、保存报告，以及英文、中文、日文 ChatGPT 手动 prompt。
 - 简单 JWT 登录和 Docker 支持。
 
 ## 要求
@@ -80,6 +82,23 @@ npm start
 admin
 ```
 
+## OpenAI 设置（可选）
+
+Daily Report 页面即使没有 API key 也可以使用：它会生成可复制到 ChatGPT 的 prompt。如果希望在应用内直接生成并保存报告，请设置：
+
+```powershell
+$env:OPENAI_API_KEY="your-openai-api-key"
+```
+
+可选设置：
+
+```powershell
+$env:OPENAI_REPORT_MODEL="gpt-4.1-mini"
+$env:OPENAI_WEB_SEARCH_TOOL="web_search"
+```
+
+报告仅用于个人分析，不构成投资、法律或税务建议。
+
 ## Docker
 
 Docker 镜像使用多阶段 `node:24-alpine` 构建，这样运行时镜像可以避开常被漏洞扫描标记的 Debian Perl 包。
@@ -121,6 +140,24 @@ http://localhost:8080/
 - `/summary` - 查看投资组合摘要并更新价格。
 - `/trade-chart` - 查看带买入/卖出标记的价格历史图表。
 - `/history` - 查看按月/按年的合并汇总历史和盈亏变化。
+- `/daily-report` - 构建每日报告快照，使用 API 生成报告，或复制英文、中文、日文 ChatGPT prompt。
+
+## Daily Report
+
+Daily Report 页面会从本地 SQLite 数据构建一个紧凑快照：
+
+- 投资组合总计和当前持仓数量
+- 按资产类别的配置比例
+- 主要持仓和重要盈亏变动
+- FX 摘要
+- 数据质量警告
+
+有两种使用方式：
+
+- `Generate today's report`：把快照发送到 OpenAI Responses API，使用 Web 搜索生成 Markdown 报告，并保存到 SQLite。
+- `Use ChatGPT Chat Instead`：复制可直接粘贴到 ChatGPT 的英文、中文或日文 prompt。此方式不需要 `OPENAI_API_KEY`。
+
+投资组合数值由应用在本地计算。模型只用于撰写说明，并把快照与当前市场/新闻背景联系起来。
 
 ## 导入说明
 
@@ -190,6 +227,7 @@ npm test
 - 投资组合 FIFO 摘要计算
 - 股票、基金、美股、FX 和黄金解析辅助函数
 - SQLite 存储适配器行为
+- 每日报告快照和 ChatGPT prompt 生成
 - 交易图表数据准备
 
 ## 许可证

@@ -27,11 +27,17 @@ fx_trades
 gold_holdings
 assets
 fx_rates
+price_history
+daily_reports
 ```
 
 Each table stores the normalized object as JSON for compatibility with the existing calculator code. The transaction and FX tables also keep sort/key columns for upsert and pagination.
 
 `fx_rates` stores one row per pair per date. During price refresh, if US stocks are present, the app fetches the last 7 days of daily `USDJPY` candles from Yahoo symbol `JPY=X` and stores the `DAILY_CLOSE` rows. Summary calculations use the latest stored USD/JPY daily close for US stock JPY market value, falling back to the imported trade FX estimate only when no FX rate is available.
+
+`price_history` stores one row per symbol/date/source for saved stock, fund, and gold prices.
+
+`daily_reports` stores one row per report date. Each row keeps the local portfolio snapshot, generated Markdown, source links, model metadata, and the personal-analysis disclaimer.
 
 ## Same-Day Buy/Sell Rule
 
@@ -51,6 +57,8 @@ This makes same-day buy/sell rows sort in calculation-friendly order.
 - `POST /import/gold`: parse and save SBI gold rows
 - `GET /transactions`: show imported transactions
 - `GET /summary`: show portfolio, FX, gold, and price summary
+- `GET /daily-report`: show the current daily report snapshot, saved report, and ChatGPT prompt variants
+- `POST /daily-report/generate`: generate and save a report with the OpenAI API
 
 ## Fresh Start
 

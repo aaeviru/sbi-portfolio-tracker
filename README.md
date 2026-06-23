@@ -22,6 +22,7 @@ The app is built for personal analysis. It is not tax software and does not make
 - Show transaction pages with pagination.
 - Show trade charts with saved price history and buy/sell markers.
 - Show combined monthly/yearly summary history with Combined Total P/L diff.
+- Generate a daily portfolio report from the local SQLite snapshot, either with the OpenAI API or by copying an English, Chinese, or Japanese prompt into ChatGPT.
 
 ## Version 0.1.0
 
@@ -32,6 +33,7 @@ This first release is a local-first SBI portfolio tracker with:
 - Portfolio summary with FIFO realized P/L, unrealized P/L, day P/L, allocation percentage, and combined portfolio/FX totals.
 - Price refresh and saved price history for stocks, mapped funds, gold, and USD/JPY valuation.
 - Trade chart and combined summary history pages.
+- Daily Report page with API generation, saved reports, and manual ChatGPT prompts in English, Chinese, and Japanese.
 - Simple JWT login and Docker support.
 
 ## Requirements
@@ -80,6 +82,23 @@ If they are not set, the local development password defaults to:
 admin
 ```
 
+## Optional OpenAI Setup
+
+The Daily Report page works without an API key by generating prompts that can be copied into ChatGPT. To generate and save reports directly inside the app, set:
+
+```powershell
+$env:OPENAI_API_KEY="your-openai-api-key"
+```
+
+Optional settings:
+
+```powershell
+$env:OPENAI_REPORT_MODEL="gpt-4.1-mini"
+$env:OPENAI_WEB_SEARCH_TOOL="web_search"
+```
+
+Reports are for personal analysis only. They are not investment, legal, or tax advice.
+
 ## Docker
 
 The Docker image uses a multi-stage `node:24-alpine` build so the runtime image avoids Debian Perl packages that are commonly flagged by vulnerability scans.
@@ -121,6 +140,24 @@ http://localhost:8080/
 - `/summary` - view portfolio summary and update prices.
 - `/trade-chart` - view price history with buy/sell markers.
 - `/history` - view monthly/yearly combined summary history and P/L changes.
+- `/daily-report` - build a daily portfolio report snapshot, generate an API-backed report, or copy a ChatGPT prompt in English, Chinese, or Japanese.
+
+## Daily Report
+
+The Daily Report page builds a compact snapshot from local SQLite data:
+
+- portfolio totals and active holding count
+- allocation by asset class
+- top holdings and notable P/L movers
+- FX summary
+- data quality warnings
+
+There are two workflows:
+
+- `Generate today's report`: sends the snapshot to the OpenAI Responses API with web search, then saves the generated Markdown report in SQLite.
+- `Use ChatGPT Chat Instead`: copies a ready-to-paste prompt for ChatGPT in English, Chinese, or Japanese. This does not require `OPENAI_API_KEY`.
+
+The app calculates the portfolio numbers locally. The model is only used to write narrative context and connect the snapshot with current market/news information.
 
 ## Import Notes
 
@@ -190,6 +227,7 @@ Current tests cover:
 - portfolio FIFO summary calculations
 - stock, fund, US stock, FX, and gold parsing helpers
 - SQLite storage adapter behavior
+- daily report snapshot and ChatGPT prompt generation
 - trade chart data preparation
 
 ## License

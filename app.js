@@ -11,6 +11,11 @@ var buildTradeChartData = require('./lib/tradeChart').buildTradeChartData;
 var attachPriceHistoryToTradeChartData = require('./lib/tradeChart').attachPriceHistoryToTradeChartData;
 var sortTradeChartAssetsBySummaryRows = require('./lib/tradeChart').sortTradeChartAssetsBySummaryRows;
 var withDb = require('./lib/db').withDb;
+var buildDailyReportSnapshot = require('./lib/dailyReport').buildDailyReportSnapshot;
+var generateDailyReport = require('./lib/openaiReport').generateDailyReport;
+var buildChatGptReportPrompt = require('./lib/openaiReport').buildChatGptReportPrompt;
+var buildChineseChatGptReportPrompt = require('./lib/openaiReport').buildChineseChatGptReportPrompt;
+var buildJapaneseChatGptReportPrompt = require('./lib/openaiReport').buildJapaneseChatGptReportPrompt;
 var app = express();
 
 var PORT = 80;
@@ -2892,6 +2897,131 @@ app.get('/trade-chart', function (req, res) {
   });
 });
 
+function getDailyReportDate(value) {
+  value = String(value || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : new Date().toISOString().slice(0, 10);
+}
+
+function findLatestDailyReport(db, callback) {
+  db.collection('dailyReports').find().sort({ reportDate: -1 }).limit(1).toArray(function (err, docs) {
+    if (err) {
+      callback(err);
+      return;
+    }
+    callback(null, docs[0] || null);
+  });
+}
+
+function findDailyReportForRequest(db, reportDate, callback) {
+  if (reportDate) {
+    db.collection('dailyReports').findOne({ reportDate: reportDate }, callback);
+    return;
+  }
+  findLatestDailyReport(db, callback);
+}
+
+function saveDailyReport(db, report, callback) {
+  db.collection('dailyReports').updateOne(
+    { reportDate: report.reportDate },
+    { $set: report },
+    { upsert: true },
+    callback
+  );
+}
+
+function renderDailyReportPage(req, res, options) {
+  options = options || {};
+  withDb(function (err, db, close) {
+    if (err) {
+      res.status(500).send(err.message);
+      return;
+    }
+
+    var requestedDate = req.query.date && getDailyReportDate(req.query.date);
+    findDailyReportForRequest(db, requestedDate, function (reportErr, report) {
+      if (reportErr) {
+        close();
+        res.status(500).send(reportErr.message);
+        return;
+      }
+
+      buildDailyReportSnapshot(db, requestedDate || getDailyReportDate(), function (snapshotErr, snapshot) {
+        close();
+        if (snapshotErr) {
+          res.status(500).send(snapshotErr.message);
+          return;
+        }
+
+        res.render('daily-report.ejs', {
+          report: options.report || report,
+          snapshot: options.snapshot || snapshot,
+          chatGptPrompt: buildChatGptReportPrompt(options.snapshot || snapshot),
+          chatGptPromptCn: buildChineseChatGptReportPrompt(options.snapshot || snapshot),
+          chatGptPromptJa: buildJapaneseChatGptReportPrompt(options.snapshot || snapshot),
+          error: options.error || req.query.error || '',
+          message: options.message || req.query.message || '',
+          hasOpenAiKey: !!process.env.OPENAI_API_KEY
+        });
+      });
+    });
+  });
+}
+
+app.get('/daily-report', function (req, res) {
+  renderDailyReportPage(req, res);
+});
+
+app.post('/daily-report/generate', function (req, res) {
+  var reportDate = getDailyReportDate(req.body.reportDate);
+  withDb(function (err, db, close) {
+    if (err) {
+      res.status(500).send(err.message);
+      return;
+    }
+
+    buildDailyReportSnapshot(db, reportDate, function (snapshotErr, snapshot) {
+      close();
+      if (snapshotErr) {
+        res.status(500).send(snapshotErr.message);
+        return;
+      }
+
+      generateDailyReport(snapshot, function (generateErr, generated) {
+        if (generateErr) {
+          renderDailyReportPage(req, res, { snapshot: snapshot, error: generateErr.message });
+          return;
+        }
+
+        var doc = {
+          reportDate: reportDate,
+          createdAt: new Date().toISOString(),
+          model: generated.model,
+          responseId: generated.responseId,
+          markdown: generated.markdown,
+          sources: generated.sources,
+          snapshot: snapshot,
+          disclaimer: 'For personal analysis only. Not tax, legal, or investment advice.'
+        };
+
+        withDb(function (saveOpenErr, saveDb, saveClose) {
+          if (saveOpenErr) {
+            res.status(500).send(saveOpenErr.message);
+            return;
+          }
+
+          saveDailyReport(saveDb, doc, function (saveErr) {
+            saveClose();
+            if (saveErr) {
+              res.status(500).send(saveErr.message);
+              return;
+            }
+            res.redirect('/daily-report?date=' + encodeURIComponent(reportDate) + '&message=' + encodeURIComponent('Daily report generated.'));
+          });
+        });
+      });
+    });
+  });
+});
 app.get('/summary', function (req, res) {
   withDb(function (err, db, close) {
     if (err) {
