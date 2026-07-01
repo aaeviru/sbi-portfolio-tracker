@@ -333,7 +333,9 @@
                 <td class="number">-</td>
               <% } %>
               <td>
-                <% if (listitem[i].assetType == 'FUND') { %>
+                <% if (listitem[i].assetSubType == 'MMF') { %>
+                  Imported MMF price
+                <% } else if (listitem[i].assetType == 'FUND') { %>
                   <form class="mapping" action="/assets/mapping" method="post">
                     <input type="hidden" name="symbol" value="<%= listitem[i].symbol %>">
                     <input type="text" name="priceSourceUrl" value="<%= listitem[i].priceSourceUrl %>" placeholder="Yahoo fund URL or code">

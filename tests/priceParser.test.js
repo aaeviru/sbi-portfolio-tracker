@@ -5,6 +5,9 @@ var parseSbiCsv = priceParsers.parseSbiCsv;
 var parseFxCsv = priceParsers.parseFxCsv;
 var parseGoldCsv = priceParsers.parseGoldCsv;
 var buildCombinedSummaryTotals = priceParsers.buildCombinedSummaryTotals;
+var normalizeAssetType = priceParsers.normalizeAssetType;
+var makeSymbol = priceParsers.makeSymbol;
+var parseSbiMmfPrice = priceParsers.parseSbiMmfPrice;
 var calculateGoldPricePerGramJpy = priceParsers.calculateGoldPricePerGramJpy;
 var buildGoldPriceHistoryRows = priceParsers.buildGoldPriceHistoryRows;
 var getGoldHoldingStartDate = priceParsers.getGoldHoldingStartDate;
@@ -67,6 +70,22 @@ assert.strictEqual(goldSnapshotRow.symbol, 'GOLD_JPY');
 assert.strictEqual(goldSnapshotRow.currency, 'JPY');
 assert.strictEqual(goldSnapshotRow.close, 21393.3);
 assert.strictEqual(goldSnapshotRow.source, 'YAHOO_GOLD_SNAPSHOT');
+
+var usdMoneyMarketFundRow = {
+  assetName: 'ＳＢＩ岡三・ＵＳドル・マネー・マーケット・ファンド',
+  code: 'X6587000',
+  action: '買付',
+  productCategory: ''
+};
+usdMoneyMarketFundRow.assetType = normalizeAssetType(usdMoneyMarketFundRow);
+assert.strictEqual(usdMoneyMarketFundRow.assetType, 'FUND');
+assert.strictEqual(makeSymbol(usdMoneyMarketFundRow), 'FUND:ＳＢＩ岡三・ＵＳドル・マネー・マーケット・ファンド');
+assert.deepStrictEqual(parseSbiMmfPrice('0.0100USD(161.87円)'), {
+  usdUnitPrice: 0.01,
+  fxRate: 161.87,
+  jpyUnitPrice: 1.6187
+});
+
 assert.strictEqual(isPriceHistoryBoundsRow({ source: 'YAHOO_CHART_SNAPSHOT' }, { assetType: 'STOCK' }), false);
 assert.strictEqual(isPriceHistoryBoundsRow({ source: 'YAHOO_CHART' }, { assetType: 'STOCK' }), true);
 assert.strictEqual(isPriceHistoryBoundsRow({ assetType: 'FUND', source: 'YAHOO_FUND_HISTORY' }, { assetType: 'FUND' }), false);

@@ -77,6 +77,29 @@ assert.strictEqual(fund.netQty, 2088);
 assert.strictEqual(fund.fifoRealizedPl, 0);
 assert.strictEqual(fund.remainingCost, 10000);
 
+var mmfRows = buildPortfolioSummary([
+  {
+    tradeDate: '2026-06-24',
+    tradeDateTime: '2026-06-24T09:00:00',
+    assetType: 'FUND',
+    productCategory: '外貨建ＭＭＦ',
+    symbol: 'FUND:ＳＢＩ岡三・ＵＳドル・マネー・マーケット・ファンド（米ドル）',
+    assetName: 'ＳＢＩ岡三・ＵＳドル・マネー・マーケット・ファンド（米ドル）',
+    side: 'BUY',
+    quantity: 61777,
+    unitPrice: null,
+    settlementAmount: 99998
+  }
+]);
+
+var mmf = find(mmfRows, 'FUND:ＳＢＩ岡三・ＵＳドル・マネー・マーケット・ファンド（米ドル）');
+assert.strictEqual(mmf.assetSubType, 'MMF');
+assert.strictEqual(mmf.latestPrice, 1.61869304);
+assert.strictEqual(mmf.latestPriceDate, '2026-06-24');
+assert.strictEqual(mmf.priceFetchStatus, 'IMPORTED_MMF_PRICE');
+assert.strictEqual(mmf.marketValue, 99998);
+assert.strictEqual(mmf.unrealizedPl, 0);
+
 var pricedRows = buildPortfolioSummary([
   {
     tradeDateTime: '2025-01-01T09:00:00',

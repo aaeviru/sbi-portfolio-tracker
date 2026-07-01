@@ -246,6 +246,26 @@ function parseNumber(value) {
   return isNaN(parsed) ? null : parsed;
 }
 
+function parseSbiMmfPrice(value) {
+  value = cleanCsvValue(value).replace(/,/g, '');
+  var match = value.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:USD|USドル)\s*\(([0-9]+(?:\.[0-9]+)?)\s*円\)/i);
+  if (!match) {
+    return null;
+  }
+
+  var usdUnitPrice = Number(match[1]);
+  var fxRate = Number(match[2]);
+  if (!isFinite(usdUnitPrice) || !isFinite(fxRate)) {
+    return null;
+  }
+
+  return {
+    usdUnitPrice: usdUnitPrice,
+    fxRate: fxRate,
+    jpyUnitPrice: Math.round(usdUnitPrice * fxRate * 100000000) / 100000000
+  };
+}
+
 function detectMoneyCurrency(value, fallback) {
   value = cleanCsvValue(value);
   if (/USD|USドル/i.test(value)) {
@@ -289,13 +309,23 @@ function normalizeAssetType(row) {
   if (row.productCategory && row.productCategory.indexOf('米国株') >= 0) {
     return 'US_STOCK';
   }
+  if (isMmfProduct(row) || cleanCsvValue(row.action).indexOf('投信') >= 0 || isFundLikeName(row.assetName)) {
+    return 'FUND';
+  }
   if (row.code) {
     return 'STOCK';
   }
-  if (row.action.indexOf('投信') >= 0) {
-    return 'FUND';
-  }
   return 'UNKNOWN';
+}
+
+function isFundLikeName(name) {
+  name = cleanCsvValue(name);
+  return /投資信託|ファンド|ＭＭＦ|MMF|マネー・マーケット/.test(name);
+}
+
+function isMmfProduct(row) {
+  row = row || {};
+  return /外貨建ＭＭＦ|外貨建MMF|ＭＭＦ|MMF|マネー・マーケット/.test(cleanCsvValue(row.productCategory) + ' ' + cleanCsvValue(row.assetName));
 }
 
 function normalizeStockCode(code) {
@@ -311,7 +341,7 @@ function makeSymbol(row) {
   if (row.assetType == 'US_STOCK' && row.code) {
     return row.code;
   }
-  if (row.code) {
+  if (row.assetType == 'STOCK' && row.code) {
     return normalizeStockCode(row.code) + '.T';
   }
 
@@ -418,12 +448,31 @@ function parseSbiCsv(buffer, sourceFile) {
     }
 
     row.side = normalizeSide(row.action);
+    var sourceHashPrice = row.price;
     row.assetType = normalizeAssetType(row);
+    row.assetSubType = isMmfProduct(row) ? 'MMF' : '';
+    if (row.assetSubType == 'MMF') {
+      var mmfPrice = parseSbiMmfPrice(parser == 'FOREIGN_STOCK' ? raw['約定単価'] : raw['約定単価']);
+      if (mmfPrice) {
+        row.mmfUsdUnitPrice = mmfPrice.usdUnitPrice;
+        row.mmfFxRate = mmfPrice.fxRate;
+        row.mmfJpyUnitPrice = mmfPrice.jpyUnitPrice;
+      }
+    }
     row.symbol = makeSymbol(row);
     row.tradeTime = makeTradeTime(row.side);
     row.tradeDateTime = row.tradeDate ? row.tradeDate + 'T' + row.tradeTime : '';
     row.priceUnit = row.assetType == 'FUND' ? 'PER_10000_UNITS' : 'PER_SHARE';
     row.unitPrice = row.assetType == 'FUND' && row.price != null ? row.price / 10000 : row.price;
+    if (row.assetSubType == 'MMF') {
+      if (isNumber(row.settlementAmount) && isNumber(row.quantity) && row.quantity > 0) {
+        row.unitPrice = Math.round(Math.abs(row.settlementAmount) / row.quantity * 100000000) / 100000000;
+      } else if (isNumber(row.mmfJpyUnitPrice)) {
+        row.unitPrice = row.mmfJpyUnitPrice;
+      }
+      row.price = isNumber(row.unitPrice) ? Math.round(row.unitPrice * 10000 * 10000) / 10000 : row.price;
+      row.priceUnit = 'PER_10000_UNITS';
+    }
 
     var hashSource = [
       row.tradeDate,
@@ -431,7 +480,7 @@ function parseSbiCsv(buffer, sourceFile) {
       row.code,
       row.action,
       row.quantity,
-      row.price,
+      sourceHashPrice,
       row.settlementDate,
       row.settlementAmount
     ].join('|');
@@ -448,6 +497,7 @@ function parseSbiCsv(buffer, sourceFile) {
       settlementDate: row.settlementDate,
       assetName: row.assetName,
       assetType: row.assetType,
+      assetSubType: row.assetSubType,
       code: row.code,
       market: row.market,
       symbol: row.symbol,
@@ -463,6 +513,9 @@ function parseSbiCsv(buffer, sourceFile) {
       priceUnit: row.priceUnit,
       currency: row.currency,
       settlementCurrency: row.settlementCurrency,
+      mmfUsdUnitPrice: row.mmfUsdUnitPrice,
+      mmfFxRate: row.mmfFxRate,
+      mmfJpyUnitPrice: row.mmfJpyUnitPrice,
       fee: row.fee,
       tax: row.tax,
       settlementAmount: row.settlementAmount
@@ -1150,11 +1203,12 @@ function summaryRowsToAssetUpdates(rows) {
           $set: {
             symbol: row.symbol,
             assetType: row.assetType,
+            assetSubType: row.assetSubType || '',
             code: row.code,
             name: row.name
           },
           $setOnInsert: {
-            priceSource: row.assetType == 'STOCK' || row.assetType == 'US_STOCK' || row.assetType == 'GOLD' ? 'YAHOO_CHART' : 'MAPPED_URL',
+            priceSource: row.assetSubType == 'MMF' ? 'IMPORTED' : row.assetType == 'STOCK' || row.assetType == 'US_STOCK' || row.assetType == 'GOLD' ? 'YAHOO_CHART' : 'MAPPED_URL',
             priceSourceUrl: '',
             latestPrice: null,
             latestPriceDate: '',
@@ -1926,6 +1980,17 @@ function updateAssetPriceHistoryStatus(db, asset, fields, callback) {
 }
 
 function refreshAssetPriceHistory(db, asset, callback) {
+  if (asset.assetSubType == 'MMF') {
+    updateAssetPriceHistoryStatus(db, asset, {
+      priceHistoryFetchedAt: new Date(),
+      priceHistoryFetchStatus: 'IMPORTED_MMF_PRICE',
+      priceHistoryFetchError: ''
+    }, function (statusErr) {
+      callback(statusErr, { ok: !statusErr, symbol: asset.symbol, skipped: true, reason: 'IMPORTED_MMF_PRICE' });
+    });
+    return;
+  }
+
   var isStock = asset.assetType == 'STOCK' || asset.assetType == 'US_STOCK';
   var isFund = asset.assetType == 'FUND';
   var isGold = asset.assetType == 'GOLD';
@@ -2171,6 +2236,9 @@ module.exports = {
   signJwt: signJwt,
   verifyJwt: verifyJwt,
   normalizeNextPath: normalizeNextPath,
+  normalizeAssetType: normalizeAssetType,
+  makeSymbol: makeSymbol,
+  parseSbiMmfPrice: parseSbiMmfPrice,
   parseSbiCsv: parseSbiCsv,
   parseFxCsv: parseFxCsv,
   parseGoldCsv: parseGoldCsv,
@@ -2267,6 +2335,19 @@ function refreshAssetPrice(db, asset, options, callback) {
     options = {};
   }
   options = options || {};
+
+  if (asset.assetSubType == 'MMF') {
+    db.collection('assets').updateOne({ symbol: asset.symbol }, {
+      $set: {
+        latestPriceFetchedAt: new Date(),
+        priceFetchStatus: 'IMPORTED_MMF_PRICE',
+        priceFetchError: ''
+      }
+    }, function (updateErr) {
+      callback(updateErr, { ok: !updateErr, symbol: asset.symbol, skipped: true, reason: 'IMPORTED_MMF_PRICE' });
+    });
+    return;
+  }
 
   var isStock = asset.assetType == 'STOCK' || asset.assetType == 'US_STOCK';
   var isGold = asset.assetType == 'GOLD';
