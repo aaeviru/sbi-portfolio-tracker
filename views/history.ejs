@@ -97,6 +97,17 @@
       overflow-x: auto;
       border: 1px solid #c7d9e3;
     }
+
+    .detail-link {
+      display: inline-block;
+      padding: 3px 8px;
+      border: 1px solid #2f6f91;
+      color: #17445c;
+      background: #eef7fb;
+      text-decoration: none;
+      border-radius: 3px;
+      font-weight: bold;
+    }
   </style>
 </head>
 
@@ -106,7 +117,7 @@
     <h1>Combined Summary History</h1>
     <div class="note">
       Current month and current year are calculated through <%= today %> and should equal the live Combined Summary.
-      Older rows are period cutoffs using the currently saved latest prices.
+      Older rows are period cutoffs using the latest saved historical price at or before each period end.
     </div>
 
     <% function equalMoney(a, b) {
@@ -121,6 +132,7 @@
           && equalMoney(totals.combinedRealizedPl, currentCombinedTotals.combinedRealizedPl)
           && equalMoney(totals.portfolioMarketValue, currentCombinedTotals.portfolioMarketValue); %>
         <tr>
+          <td><a class="detail-link" href="/history/<%= rows[i].type %>/<%= encodeURIComponent(rows[i].key) %>">Detail</a></td>
           <td><%= rows[i].label %><%= rows[i].isCurrent ? ' (current)' : '' %></td>
           <td><%= rows[i].endDate %></td>
           <td class="number" data-number="<%= rows[i].txCount %>"></td>
@@ -151,6 +163,7 @@
       <table>
         <thead>
           <tr>
+            <th>Detail</th>
             <th>Month</th>
             <th>Through</th>
             <th>Tx Count</th>
@@ -177,6 +190,7 @@
       <table>
         <thead>
           <tr>
+            <th>Detail</th>
             <th>Year</th>
             <th>Through</th>
             <th>Tx Count</th>

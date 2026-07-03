@@ -22,7 +22,7 @@ The app is built for personal analysis. It is not tax software and does not make
 - Show a portfolio summary with market value, unrealized P/L, FIFO realized P/L, dividend/distribution income, total realized P/L, day P/L, and allocation percentage.
 - Show transaction pages with pagination.
 - Show trade charts with saved price history and buy/sell markers.
-- Show combined monthly/yearly summary history with historical period prices and Combined Total P/L diff.
+- Show combined monthly/yearly summary history with historical period prices, Combined Total P/L diff, and a Detail drilldown for period changes.
 - Generate a daily portfolio report from the local SQLite snapshot, either with the OpenAI API or by copying an English, Chinese, or Japanese prompt into ChatGPT.
 
 ## Version 0.1.0
@@ -33,7 +33,7 @@ This first release is a local-first SBI portfolio tracker with:
 - SQLite storage for local personal use.
 - Portfolio summary with FIFO realized P/L, dividend/distribution income, unrealized P/L, day P/L, allocation percentage, and combined portfolio/FX totals.
 - Price refresh and saved price history for stocks, mapped funds, gold, and USD/JPY valuation.
-- Trade chart and combined summary history pages.
+- Trade chart and combined summary history pages, including period detail attribution for monthly/yearly P/L changes.
 - Daily Report page with API generation, saved reports, and manual ChatGPT prompts in English, Chinese, and Japanese.
 - Simple JWT login and Docker support.
 
@@ -140,7 +140,7 @@ http://localhost:8080/
 - `/transactions` - view imported normalized transactions.
 - `/summary` - view portfolio summary and update prices.
 - `/trade-chart` - view price history with buy/sell markers.
-- `/history` - view monthly/yearly combined summary history and P/L changes.
+- `/history` - view monthly/yearly combined summary history, P/L changes, and period detail attribution.
 - `/daily-report` - build a daily portfolio report snapshot, generate an API-backed report, or copy a ChatGPT prompt in English, Chinese, or Japanese.
 
 ## Daily Report
@@ -212,6 +212,13 @@ Day P/L compares the current JPY market value with the previous saved price-hist
 ## Combined Summary History
 
 `/history` calculates the current month and current year through the local current date, so those current rows should match the live Combined Summary. Older monthly and yearly rows are period cutoffs. They use the latest saved price-history row at or before each period end date, falling back to the current asset price only when no historical price row exists.
+
+Use the `Detail` button on a monthly or yearly row to see why the period changed. The detail page compares the selected period end with the previous period end and shows:
+
+- top asset and FX reasons for the Combined Total P/L change
+- asset-level market value, unrealized P/L, realized P/L, income, and total P/L changes
+- portfolio transactions inside the period
+- FX trades inside the period
 
 ## Data Source Caveat
 

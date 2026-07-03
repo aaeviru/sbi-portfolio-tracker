@@ -1,0 +1,285 @@
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" type="text/css" href="/menu.css">
+  <script type="text/javascript">
+    function navbarHighLight() {
+      var now = document.getElementById("history");
+      if (now) {
+        now.className += " active";
+      }
+    }
+
+    function formatNumber(value) {
+      return Number(value || 0).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+    }
+
+    window.onload = function () {
+      navbarHighLight();
+      var cells = document.querySelectorAll('[data-number]');
+      for (var i = 0; i < cells.length; i++) {
+        cells[i].textContent = formatNumber(cells[i].getAttribute('data-number'));
+      }
+    };
+  </script>
+  <style>
+    .content {
+      margin: 24px;
+      font-family: sans-serif;
+    }
+
+    .note {
+      margin: 12px 0;
+      padding: 8px 10px;
+      border: 1px solid #b7c7d0;
+      background: #eef7fb;
+    }
+
+    .back-link {
+      display: inline-block;
+      margin-bottom: 12px;
+      color: #17445c;
+      font-weight: bold;
+    }
+
+    .summary-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 16px 0 24px;
+    }
+
+    .summary-item {
+      border: 1px solid #c7d9e3;
+      padding: 10px 12px;
+      background: #eef7fb;
+      min-width: 210px;
+    }
+
+    .summary-item strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    table {
+      min-width: 900px;
+      border-collapse: collapse;
+      font-size: 14px;
+      margin-bottom: 28px;
+    }
+
+    th,
+    td {
+      border: 1px solid #c7d9e3;
+      padding: 4px 6px;
+      white-space: nowrap;
+    }
+
+    th {
+      background: #2f6f91;
+      color: #fff;
+      text-align: left;
+    }
+
+    tbody tr:nth-child(odd) {
+      background: #b9d7e5;
+    }
+
+    tbody tr:nth-child(even) {
+      background: #dedede;
+    }
+
+    .number {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .negative {
+      color: #f00;
+    }
+
+    .positive {
+      color: #117a2f;
+    }
+
+    .table-scroll {
+      max-width: 100%;
+      overflow-x: auto;
+      border: 1px solid #c7d9e3;
+      margin-bottom: 24px;
+    }
+  </style>
+</head>
+
+<body>
+  <%- include('partials/menu'); -%>
+  <div class="content">
+    <a class="back-link" href="/history">Back to History</a>
+    <h1>History Detail: <%= detail.label %></h1>
+    <div class="note">
+      Comparing <%= detail.startDate %> through <%= detail.endDate %>
+      <% if (detail.previousLabel) { %>
+        against <%= detail.previousLabel %> through <%= detail.previousEndDate %>.
+      <% } else { %>
+        against an empty starting point.
+      <% } %>
+    </div>
+
+    <div class="summary-grid">
+      <div class="summary-item">
+        <strong>Combined Total P/L Change</strong>
+        <span class="<%= detail.changes.combinedTotalPl < 0 ? 'negative' : 'positive' %>" data-number="<%= detail.changes.combinedTotalPl %>"></span>
+      </div>
+      <div class="summary-item">
+        <strong>Portfolio Total P/L Change</strong>
+        <span class="<%= detail.changes.portfolioTotalPl < 0 ? 'negative' : 'positive' %>" data-number="<%= detail.changes.portfolioTotalPl %>"></span>
+      </div>
+      <div class="summary-item">
+        <strong>Unrealized P/L Change</strong>
+        <span class="<%= detail.changes.portfolioUnrealizedPl < 0 ? 'negative' : 'positive' %>" data-number="<%= detail.changes.portfolioUnrealizedPl %>"></span>
+      </div>
+      <div class="summary-item">
+        <strong>Realized P/L Change</strong>
+        <span class="<%= detail.changes.portfolioRealizedPl < 0 ? 'negative' : 'positive' %>" data-number="<%= detail.changes.portfolioRealizedPl %>"></span>
+      </div>
+      <div class="summary-item">
+        <strong>FX Total P/L Change</strong>
+        <span class="<%= detail.changes.fxTotalPl < 0 ? 'negative' : 'positive' %>" data-number="<%= detail.changes.fxTotalPl %>"></span>
+      </div>
+    </div>
+
+    <h2>Top Reasons</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Reason</th>
+            <th>Detail</th>
+            <th>Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (!detail.mainReasons.length) { %>
+            <tr><td colspan="3">No change detected.</td></tr>
+          <% } %>
+          <% for (var i = 0; i < detail.mainReasons.length; i++) { %>
+            <tr>
+              <td><%= detail.mainReasons[i].label %></td>
+              <td><%= detail.mainReasons[i].detail %></td>
+              <td class="number <%= detail.mainReasons[i].amount < 0 ? 'negative' : 'positive' %>" data-number="<%= detail.mainReasons[i].amount %>"></td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Asset Movers</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Asset</th>
+            <th>Name</th>
+            <th>Asset Class</th>
+            <th>Net Qty</th>
+            <th>Market Value Change</th>
+            <th>Unrealized P/L Change</th>
+            <th>Realized P/L Change</th>
+            <th>Income Change</th>
+            <th>Total P/L Change</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (!detail.movers.length) { %>
+            <tr><td colspan="9">No asset-level change detected.</td></tr>
+          <% } %>
+          <% for (var m = 0; m < detail.movers.length; m++) { %>
+            <tr>
+              <td><%= detail.movers[m].displaySymbol %></td>
+              <td><%= detail.movers[m].name %></td>
+              <td><%= detail.movers[m].assetClass %></td>
+              <td class="number" data-number="<%= detail.movers[m].netQty %>"></td>
+              <td class="number <%= detail.movers[m].marketValueChange < 0 ? 'negative' : 'positive' %>" data-number="<%= detail.movers[m].marketValueChange %>"></td>
+              <td class="number <%= detail.movers[m].unrealizedPlChange < 0 ? 'negative' : 'positive' %>" data-number="<%= detail.movers[m].unrealizedPlChange %>"></td>
+              <td class="number <%= detail.movers[m].realizedPlChange < 0 ? 'negative' : 'positive' %>" data-number="<%= detail.movers[m].realizedPlChange %>"></td>
+              <td class="number <%= detail.movers[m].incomeChange < 0 ? 'negative' : 'positive' %>" data-number="<%= detail.movers[m].incomeChange %>"></td>
+              <td class="number <%= detail.movers[m].totalPlChange < 0 ? 'negative' : 'positive' %>" data-number="<%= detail.movers[m].totalPlChange %>"></td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Transactions In Period</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Side</th>
+            <th>Asset</th>
+            <th>Name</th>
+            <th>Quantity</th>
+            <th>Settlement Amount</th>
+            <th>Currency</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (!detail.periodTransactions.length) { %>
+            <tr><td colspan="7">No portfolio transactions in this period.</td></tr>
+          <% } %>
+          <% for (var t = 0; t < detail.periodTransactions.length; t++) { %>
+            <tr>
+              <td><%= detail.periodTransactions[t].date %></td>
+              <td><%= detail.periodTransactions[t].side %></td>
+              <td><%= detail.periodTransactions[t].symbol %></td>
+              <td><%= detail.periodTransactions[t].name %></td>
+              <td class="number" data-number="<%= detail.periodTransactions[t].quantity %>"></td>
+              <td class="number <%= detail.periodTransactions[t].settlementAmount < 0 ? 'negative' : '' %>" data-number="<%= detail.periodTransactions[t].settlementAmount %>"></td>
+              <td><%= detail.periodTransactions[t].settlementCurrency %></td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>FX Trades In Period</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Pair</th>
+            <th>Action</th>
+            <th>Quantity</th>
+            <th>Realized P/L</th>
+            <th>Swap</th>
+            <th>Total P/L</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (!detail.periodFxTrades.length) { %>
+            <tr><td colspan="7">No FX trades in this period.</td></tr>
+          <% } %>
+          <% for (var f = 0; f < detail.periodFxTrades.length; f++) { %>
+            <tr>
+              <td><%= detail.periodFxTrades[f].tradeDate || detail.periodFxTrades[f].settlementDate || '' %></td>
+              <td><%= detail.periodFxTrades[f].pair || '' %></td>
+              <td><%= detail.periodFxTrades[f].action || '' %></td>
+              <td class="number" data-number="<%= detail.periodFxTrades[f].quantity || 0 %>"></td>
+              <td class="number <%= detail.periodFxTrades[f].realizedPl < 0 ? 'negative' : 'positive' %>" data-number="<%= detail.periodFxTrades[f].realizedPl || 0 %>"></td>
+              <td class="number <%= detail.periodFxTrades[f].realizedSwap < 0 ? 'negative' : 'positive' %>" data-number="<%= detail.periodFxTrades[f].realizedSwap || 0 %>"></td>
+              <td class="number <%= detail.periodFxTrades[f].totalPl < 0 ? 'negative' : 'positive' %>" data-number="<%= detail.periodFxTrades[f].totalPl || 0 %>"></td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+
+</html>

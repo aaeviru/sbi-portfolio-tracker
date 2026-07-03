@@ -2,6 +2,7 @@ var assert = require('assert');
 var buildPortfolioSummaryReport = require('../lib/portfolioSummary').buildPortfolioSummaryReport;
 var historyLib = require('../lib/combinedSummaryHistory');
 var buildCombinedSummaryHistory = historyLib.buildCombinedSummaryHistory;
+var buildCombinedSummaryPeriodDetail = historyLib.buildCombinedSummaryPeriodDetail;
 var buildCombinedSummaryTotals = historyLib.buildCombinedSummaryTotals;
 var buildFxSummary = historyLib.buildFxSummary;
 var normalizeDateText = historyLib.normalizeDateText;
@@ -144,5 +145,26 @@ assert.strictEqual(juneHistorical.totals.portfolioMarketValue, 280000);
 assert.strictEqual(juneHistorical.totals.portfolioUnrealizedPl, 30000);
 assert.strictEqual(juneHistorical.totals.portfolioTotalPl, 54105);
 assert.strictEqual(julyCurrent.combinedTotalPlDiff, julyCurrent.totals.combinedTotalPl - juneHistorical.totals.combinedTotalPl);
+
+var juneDetail = buildCombinedSummaryPeriodDetail({
+  type: 'month',
+  key: '2026-06',
+  transactions: transactions,
+  fxTrades: fxTrades,
+  assetsBySymbol: assetsBySymbol,
+  priceHistoryBySymbol: priceHistoryBySymbol,
+  today: '2026-07-03'
+});
+
+assert.strictEqual(juneDetail.startDate, '2026-06-01');
+assert.strictEqual(juneDetail.endDate, '2026-06-30');
+assert.strictEqual(juneDetail.previousLabel, '2026-05');
+assert.strictEqual(juneDetail.changes.combinedTotalPl, 25105);
+assert.strictEqual(juneDetail.changes.portfolioTotalPl, 24105);
+assert.strictEqual(juneDetail.changes.fxTotalPl, 1000);
+assert.strictEqual(juneDetail.movers[0].symbol, '7936.T');
+assert.strictEqual(juneDetail.movers[0].totalPlChange, 20000);
+assert.strictEqual(juneDetail.periodTransactions.length, 3);
+assert.strictEqual(juneDetail.periodFxTrades.length, 1);
 
 console.log('combinedSummaryHistory tests passed');

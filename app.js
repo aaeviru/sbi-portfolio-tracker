@@ -6,7 +6,9 @@ var crypto = require('crypto');
 var TextDecoder = require('util').TextDecoder;
 var buildPortfolioSummary = require('./lib/portfolioSummary').buildPortfolioSummary;
 var buildPortfolioSummaryReport = require('./lib/portfolioSummary').buildPortfolioSummaryReport;
-var buildCombinedSummaryHistory = require('./lib/combinedSummaryHistory').buildCombinedSummaryHistory;
+var combinedSummaryHistoryLib = require('./lib/combinedSummaryHistory');
+var buildCombinedSummaryHistory = combinedSummaryHistoryLib.buildCombinedSummaryHistory;
+var buildCombinedSummaryPeriodDetail = combinedSummaryHistoryLib.buildCombinedSummaryPeriodDetail;
 var buildTradeChartData = require('./lib/tradeChart').buildTradeChartData;
 var attachPriceHistoryToTradeChartData = require('./lib/tradeChart').attachPriceHistoryToTradeChartData;
 var sortTradeChartAssetsBySummaryRows = require('./lib/tradeChart').sortTradeChartAssetsBySummaryRows;
@@ -3402,6 +3404,88 @@ app.get('/history', function (req, res) {
                   }),
                   currentCombinedTotals: buildCombinedSummaryTotals(currentReport.totals, currentFxSummary.totals),
                   today: today
+                });
+              });
+            });
+          });
+        });
+      });
+    });
+  });
+});
+
+app.get('/history/:type/:key', function (req, res) {
+  var type = req.params.type == 'year' ? 'year' : 'month';
+  var key = cleanCsvValue(req.params.key);
+
+  withDb(function (err, db, close) {
+    if (err) {
+      res.status(500).send(err.message);
+      return;
+    }
+
+    findAllTransactions(db, function (findErr, transactionDocs) {
+      if (findErr) {
+        close();
+        res.status(500).send(findErr.message);
+        return;
+      }
+
+      findGoldHolding(db, function (goldErr, goldHolding) {
+        if (goldErr) {
+          close();
+          res.status(500).send(goldErr.message);
+          return;
+        }
+
+        var docs = addGoldTransaction(transactionDocs, goldHolding);
+        var summaryRows = buildPortfolioSummary(docs);
+        syncAssetsFromSummary(db, summaryRows, function (syncErr) {
+          if (syncErr) {
+            close();
+            res.status(500).send(syncErr.message);
+            return;
+          }
+
+          findAssetsBySymbols(db, summaryRows.map(function (row) { return row.symbol; }), function (assetErr, assetsBySymbol) {
+            if (assetErr) {
+              close();
+              res.status(500).send(assetErr.message);
+              return;
+            }
+
+            var symbols = summaryRows.map(function (row) { return row.symbol; });
+            db.collection('priceHistory').find({ symbol: { $in: symbols } }).toArray(function (historyErr, priceHistoryRows) {
+              if (historyErr) {
+                close();
+                res.status(500).send(historyErr.message);
+                return;
+              }
+
+              findAllFxTrades(db, function (fxErr, fxTrades) {
+                close();
+                if (fxErr) {
+                  res.status(500).send(fxErr.message);
+                  return;
+                }
+
+                var detail = buildCombinedSummaryPeriodDetail({
+                  type: type,
+                  key: key,
+                  transactions: docs,
+                  fxTrades: fxTrades,
+                  assetsBySymbol: assetsBySymbol,
+                  priceHistoryBySymbol: mapPriceHistoryBySymbol(priceHistoryRows),
+                  today: getLocalIsoDate()
+                });
+
+                if (!detail) {
+                  res.status(404).send('History period was not found.');
+                  return;
+                }
+
+                res.render('history-detail.ejs', {
+                  detail: detail
                 });
               });
             });
