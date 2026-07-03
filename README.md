@@ -25,6 +25,16 @@ The app is built for personal analysis. It is not tax software and does not make
 - Show combined monthly/yearly summary history with historical period prices, Combined Total P/L diff, and a Detail drilldown for period changes.
 - Generate a daily portfolio report from the local SQLite snapshot, either with the OpenAI API or by copying an English, Chinese, or Japanese prompt into ChatGPT.
 
+## Version 0.1.1
+
+This release improves period review and income tracking:
+
+- Import SBI dividend/distribution CSV files and include that income in realized P/L.
+- Show dividend/distribution income separately in the portfolio summary.
+- Calculate older monthly/yearly history rows with saved historical prices at each period end.
+- Add `Detail` drilldowns on history rows to explain period P/L changes by asset, FX, and in-period transactions.
+- Harden manual ChatGPT prompts in English, Chinese, and Japanese so Deep Research starts with the portfolio report instead of a generic research template.
+
 ## Version 0.1.0
 
 This first release is a local-first SBI portfolio tracker with:
