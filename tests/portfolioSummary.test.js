@@ -77,6 +77,60 @@ assert.strictEqual(fund.netQty, 2088);
 assert.strictEqual(fund.fifoRealizedPl, 0);
 assert.strictEqual(fund.remainingCost, 10000);
 
+var incomeReport = buildPortfolioSummaryReport([
+  {
+    tradeDate: '2026-06-01',
+    tradeDateTime: '2026-06-01T09:00:00',
+    assetType: 'STOCK',
+    code: '7974',
+    symbol: '7974.T',
+    assetName: 'Nintendo',
+    side: 'BUY',
+    quantity: 100,
+    settlementAmount: 100000
+  },
+  {
+    tradeDate: '2026-06-29',
+    tradeDateTime: '2026-06-29T12:00:00',
+    assetType: 'STOCK',
+    code: '7974',
+    symbol: '7974.T',
+    assetName: 'Nintendo',
+    side: 'DIVIDEND',
+    quantity: 100,
+    distributionAmountJpy: 14105,
+    settlementAmount: 14105,
+    settlementCurrency: 'JPY'
+  },
+  {
+    tradeDate: '2026-06-30',
+    tradeDateTime: '2026-06-30T12:00:00',
+    assetType: 'FUND',
+    assetSubType: 'MMF',
+    symbol: 'FUND:USDMMF',
+    assetName: 'USD MMF',
+    side: 'DISTRIBUTION',
+    quantity: 61777,
+    distributionAmountJpy: 38.58,
+    settlementAmount: 38.58,
+    settlementCurrency: 'JPY'
+  }
+], {
+  '7974.T': { latestPrice: 1100, latestPriceDate: '2026-06-30' }
+});
+
+var incomeNintendo = find(incomeReport.rows, '7974.T');
+var incomeMmf = find(incomeReport.rows, 'FUND:USDMMF');
+assert.strictEqual(incomeNintendo.incomeAmount, 14105);
+assert.strictEqual(incomeNintendo.dividendIncome, 14105);
+assert.strictEqual(incomeNintendo.realizedPl, 14105);
+assert.strictEqual(incomeNintendo.totalPl, 24105);
+assert.strictEqual(incomeMmf.incomeAmount, 38.58);
+assert.strictEqual(incomeMmf.distributionIncome, 38.58);
+assert.strictEqual(incomeMmf.totalPl, 38.58);
+assert.strictEqual(incomeReport.totals.realizedPl, 14143.58);
+assert.strictEqual(incomeReport.totals.totalPl, 24143.58);
+
 var mmfRows = buildPortfolioSummary([
   {
     tradeDate: '2026-06-24',

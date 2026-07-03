@@ -286,6 +286,14 @@ function normalizeDate(value) {
   return value.replace(/\//g, '-');
 }
 
+function getLocalIsoDate(date) {
+  date = date || new Date();
+  var year = date.getFullYear();
+  var month = String(date.getMonth() + 1).padStart(2, '0');
+  var day = String(date.getDate()).padStart(2, '0');
+  return year + '-' + month + '-' + day;
+}
+
 function normalizeDateTime(value) {
   value = normalizeDate(value);
   if (!value) {
@@ -358,8 +366,157 @@ function makeTradeTime(side) {
   return '12:00:00';
 }
 
+function parseDistributionSecurityName(productCategory, value) {
+  value = cleanCsvValue(value);
+  productCategory = cleanCsvValue(productCategory);
+
+  if (productCategory.indexOf('国内株式') >= 0) {
+    var stockMatch = value.match(/^(.+)\s+([0-9]{3,4}[A-Z]?)$/i);
+    if (stockMatch) {
+      return {
+        assetName: cleanCsvValue(stockMatch[1]),
+        code: normalizeStockCode(stockMatch[2])
+      };
+    }
+  }
+
+  if (productCategory.indexOf('米国株') >= 0) {
+    var usMatch = value.match(/^(.+)\s+([A-Z][A-Z0-9.\-]{0,9})$/);
+    if (usMatch) {
+      return {
+        assetName: cleanCsvValue(usMatch[1]),
+        code: cleanCsvValue(usMatch[2]).toUpperCase()
+      };
+    }
+  }
+
+  return {
+    assetName: value,
+    code: ''
+  };
+}
+
+function findSbiDistributionHeaderIndex(lines) {
+  for (var i = 0; i < lines.length; i++) {
+    var headers = parseCsvLine(lines[i]).map(cleanCsvValue);
+    if (headers[0] == '受渡日' && headers[1] == '口座' && headers[2] == '商品' && headers[3] == '銘柄名' && headers[4] == '数量') {
+      return i;
+    }
+  }
+  return -1;
+}
+
 function decodeSbiCsv(buffer) {
   return new TextDecoder('shift_jis').decode(buffer);
+}
+
+function parseSbiDistributionText(text, sourceFile) {
+  var lines = text.split(/\r?\n/);
+  var headerIndex = findSbiDistributionHeaderIndex(lines);
+  if (headerIndex < 0) {
+    throw new Error('SBI distribution CSV header was not found.');
+  }
+
+  var headers = parseCsvLine(lines[headerIndex]).map(cleanCsvValue);
+  var importedAt = new Date();
+  var docs = [];
+
+  for (var i = headerIndex + 1; i < lines.length; i++) {
+    var line = lines[i];
+    if (!line || !line.trim()) {
+      continue;
+    }
+
+    var columns = parseCsvLine(line);
+    if (columns.length < headers.length) {
+      continue;
+    }
+
+    var raw = {};
+    for (var j = 0; j < headers.length; j++) {
+      raw[headers[j]] = cleanCsvValue(columns[j]);
+    }
+
+    var productCategory = raw['商品'];
+    var parsedName = parseDistributionSecurityName(productCategory, raw['銘柄名']);
+    var amountJpy = parseNumber(raw['受取額(税引後・円)']);
+    var amountUsd = parseNumber(raw['受取額(税引後・USD)']);
+    var row = {
+      tradeDate: normalizeDate(raw['受渡日']),
+      settlementDate: normalizeDate(raw['受渡日']),
+      productCategory: productCategory,
+      assetName: parsedName.assetName,
+      code: parsedName.code,
+      action: productCategory.indexOf('株式') >= 0 ? '配当金' : '分配金',
+      account: raw['口座'],
+      quantity: parseNumber(raw['数量']),
+      price: null,
+      fee: 0,
+      tax: 0,
+      distributionAmountJpy: amountJpy,
+      distributionAmountUsd: amountUsd,
+      settlementAmount: amountJpy != null ? amountJpy : amountUsd,
+      currency: amountJpy != null ? 'JPY' : 'USD',
+      settlementCurrency: amountJpy != null ? 'JPY' : 'USD'
+    };
+
+    row.assetType = normalizeAssetType(row);
+    row.assetSubType = isMmfProduct(row) ? 'MMF' : '';
+    row.symbol = makeSymbol(row);
+    row.side = row.assetType == 'FUND' ? 'DISTRIBUTION' : 'DIVIDEND';
+    row.tradeTime = makeTradeTime(row.side);
+    row.tradeDateTime = row.tradeDate ? row.tradeDate + 'T' + row.tradeTime : '';
+    row.priceUnit = '';
+    row.unitPrice = null;
+
+    var hashSource = [
+      row.tradeDate,
+      row.productCategory,
+      row.account,
+      row.assetName,
+      row.code,
+      row.quantity,
+      row.settlementAmount,
+      row.settlementCurrency
+    ].join('|');
+
+    docs.push({
+      source: 'SBI_DISTRIBUTION',
+      sourceFile: sourceFile,
+      sourceHash: crypto.createHash('sha1').update(hashSource).digest('hex'),
+      importedAt: importedAt,
+      tradeDate: row.tradeDate,
+      tradeTime: row.tradeTime,
+      tradeDateTime: row.tradeDateTime,
+      settlementDate: row.settlementDate,
+      productCategory: row.productCategory,
+      assetName: row.assetName,
+      assetType: row.assetType,
+      assetSubType: row.assetSubType,
+      code: row.code,
+      symbol: row.symbol,
+      action: row.action,
+      side: row.side,
+      account: row.account,
+      quantity: row.quantity,
+      price: row.price,
+      unitPrice: row.unitPrice,
+      priceUnit: row.priceUnit,
+      currency: row.currency,
+      settlementCurrency: row.settlementCurrency,
+      distributionAmountJpy: row.distributionAmountJpy,
+      distributionAmountUsd: row.distributionAmountUsd,
+      settlementAmount: row.settlementAmount,
+      fee: row.fee,
+      tax: row.tax
+    });
+  }
+
+  return docs;
+}
+
+function parseSbiDistributionCsv(buffer, sourceFile) {
+  return parseSbiDistributionText(decodeSbiCsv(buffer), sourceFile);
 }
 
 function parseSbiCsv(buffer, sourceFile) {
@@ -367,6 +524,10 @@ function parseSbiCsv(buffer, sourceFile) {
   var lines = text.split(/\r?\n/);
   var headerIndex = -1;
   var parser = 'DOMESTIC';
+
+  if (findSbiDistributionHeaderIndex(lines) >= 0) {
+    return parseSbiDistributionText(text, sourceFile);
+  }
 
   for (var i = 0; i < lines.length; i++) {
     if (lines[i].indexOf('約定日,銘柄,銘柄コード') === 0) {
@@ -2239,6 +2400,7 @@ module.exports = {
   normalizeAssetType: normalizeAssetType,
   makeSymbol: makeSymbol,
   parseSbiMmfPrice: parseSbiMmfPrice,
+  parseSbiDistributionCsv: parseSbiDistributionCsv,
   parseSbiCsv: parseSbiCsv,
   parseFxCsv: parseFxCsv,
   parseGoldCsv: parseGoldCsv,
@@ -3227,7 +3389,7 @@ app.get('/history', function (req, res) {
                   return;
                 }
 
-                var today = new Date().toISOString().slice(0, 10);
+                var today = getLocalIsoDate();
                 var currentReport = buildPortfolioSummaryReport(docs, assetsBySymbol, mapPriceHistoryBySymbol(priceHistoryRows));
                 var currentFxSummary = buildFxSummary(fxTrades);
                 res.render('history.ejs', {

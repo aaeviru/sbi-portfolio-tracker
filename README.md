@@ -10,6 +10,7 @@ The app is built for personal analysis. It is not tax software and does not make
 
 - Import SBI domestic stock and investment fund transaction CSV files.
 - Import SBI US stock payment records.
+- Import SBI dividend and distribution CSV files.
 - Import SBI FX settlement CSV files.
 - Import SBI gold order CSV files as detailed `GOLD_JPY` trade rows.
 - Store data locally in SQLite.
@@ -18,19 +19,19 @@ The app is built for personal analysis. It is not tax software and does not make
 - Refresh latest prices for Japanese stocks, US stocks, mapped funds, and gold.
 - Save daily stock, fund, and gold price history for charting.
 - Store USD/JPY FX rates for US stock JPY valuation.
-- Show a portfolio summary with market value, unrealized P/L, realized P/L, day P/L, and allocation percentage.
+- Show a portfolio summary with market value, unrealized P/L, FIFO realized P/L, dividend/distribution income, total realized P/L, day P/L, and allocation percentage.
 - Show transaction pages with pagination.
 - Show trade charts with saved price history and buy/sell markers.
-- Show combined monthly/yearly summary history with Combined Total P/L diff.
+- Show combined monthly/yearly summary history with historical period prices and Combined Total P/L diff.
 - Generate a daily portfolio report from the local SQLite snapshot, either with the OpenAI API or by copying an English, Chinese, or Japanese prompt into ChatGPT.
 
 ## Version 0.1.0
 
 This first release is a local-first SBI portfolio tracker with:
 
-- CSV imports for SBI domestic transactions, US stock payment records, FX settlements, and gold orders.
+- CSV imports for SBI domestic transactions, US stock payment records, dividend/distribution records, FX settlements, and gold orders.
 - SQLite storage for local personal use.
-- Portfolio summary with FIFO realized P/L, unrealized P/L, day P/L, allocation percentage, and combined portfolio/FX totals.
+- Portfolio summary with FIFO realized P/L, dividend/distribution income, unrealized P/L, day P/L, allocation percentage, and combined portfolio/FX totals.
 - Price refresh and saved price history for stocks, mapped funds, gold, and USD/JPY valuation.
 - Trade chart and combined summary history pages.
 - Daily Report page with API generation, saved reports, and manual ChatGPT prompts in English, Chinese, and Japanese.
@@ -135,7 +136,7 @@ http://localhost:8080/
 
 ## Main Pages
 
-- `/import` - upload SBI CSV files for transactions, FX, and gold.
+- `/import` - upload SBI CSV files for transactions, dividends/distributions, FX, and gold.
 - `/transactions` - view imported normalized transactions.
 - `/summary` - view portfolio summary and update prices.
 - `/trade-chart` - view price history with buy/sell markers.
@@ -159,6 +160,8 @@ There are two workflows:
 
 The app calculates the portfolio numbers locally. The model is only used to write narrative context and connect the snapshot with current market/news information.
 
+When using ChatGPT or Deep Research manually, paste the full generated prompt including the JSON snapshot. Sending only a short trigger such as `@deep research` can produce a generic research-plan template instead of a portfolio report.
+
 ## Import Notes
 
 The importer normalizes:
@@ -167,6 +170,13 @@ The importer normalizes:
 - US stocks as symbols like `NVDA`
 - Investment funds as custom fund symbols
 - Gold as `GOLD_JPY`
+
+Dividend/distribution CSV imports create non-position transaction rows:
+
+- Stock income uses side `DIVIDEND`.
+- Fund and MMF income uses side `DISTRIBUTION`.
+- Income rows do not change quantity or FIFO lots.
+- Portfolio realized P/L includes FIFO realized P/L plus dividend/distribution income.
 
 Gold CSV imports keep aggregate metadata in `gold_holdings`, but individual filled gold orders are also imported into the normal `transactions` table. Those detailed rows are what drive summary FIFO, trade chart buy markers, and gold price-history refresh. The old manual gold entry form has been removed.
 
@@ -199,6 +209,10 @@ For US stocks, chart comparison dates are shifted to the US market date when nee
 
 Day P/L compares the current JPY market value with the previous saved price-history date. This avoids fake blanks around weekends, holidays, and delayed fund NAV dates.
 
+## Combined Summary History
+
+`/history` calculates the current month and current year through the local current date, so those current rows should match the live Combined Summary. Older monthly and yearly rows are period cutoffs. They use the latest saved price-history row at or before each period end date, falling back to the current asset price only when no historical price row exists.
+
 ## Data Source Caveat
 
 Stock and gold price history use Yahoo-compatible chart data. Gold JPY/gram history also depends on USD/JPY chart data. Fund price history uses Yahoo Japan's frontend fund-history endpoint with a short-lived page token. That fund endpoint is not a documented public API, so it should be treated as best-effort for local personal use.
@@ -225,7 +239,7 @@ npm test
 Current tests cover:
 
 - portfolio FIFO summary calculations
-- stock, fund, US stock, FX, and gold parsing helpers
+- stock, fund, US stock, dividend/distribution, FX, and gold parsing helpers
 - SQLite storage adapter behavior
 - daily report snapshot and ChatGPT prompt generation
 - trade chart data preparation

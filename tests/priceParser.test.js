@@ -2,6 +2,7 @@ var assert = require('assert');
 var fs = require('fs');
 var priceParsers = require('../app');
 var parseSbiCsv = priceParsers.parseSbiCsv;
+var parseSbiDistributionCsv = priceParsers.parseSbiDistributionCsv;
 var parseFxCsv = priceParsers.parseFxCsv;
 var parseGoldCsv = priceParsers.parseGoldCsv;
 var buildCombinedSummaryTotals = priceParsers.buildCombinedSummaryTotals;
@@ -152,6 +153,38 @@ assert.strictEqual(sampleNvdaRow.settlementCurrency, 'JPY');
 assert.strictEqual(usdSettlementRow.settlementAmount, 854.34);
 assert.strictEqual(usdSettlementRow.currency, 'USD');
 assert.strictEqual(usdSettlementRow.settlementCurrency, 'USD');
+
+var distributionRows = parseSbiCsv(fs.readFileSync('samples/DISTRIBUTION_20260702011718.csv'), 'DISTRIBUTION_20260702011718.csv');
+assert.strictEqual(distributionRows.length, 4);
+var directDistributionRows = parseSbiDistributionCsv(fs.readFileSync('samples/DISTRIBUTION_20260702011718.csv'), 'DISTRIBUTION_20260702011718.csv');
+assert.strictEqual(directDistributionRows.length, 4);
+var nintendoDistribution = distributionRows.filter(function (row) {
+  return row.symbol == '7974.T';
+})[0];
+var nvdaDistribution = distributionRows.filter(function (row) {
+  return row.symbol == 'NVDA';
+})[0];
+var mmfDistribution = distributionRows.filter(function (row) {
+  return row.assetSubType == 'MMF';
+})[0];
+assert.ok(nintendoDistribution);
+assert.strictEqual(nintendoDistribution.source, 'SBI_DISTRIBUTION');
+assert.strictEqual(nintendoDistribution.assetType, 'STOCK');
+assert.strictEqual(nintendoDistribution.assetName, '任天堂');
+assert.strictEqual(nintendoDistribution.side, 'DIVIDEND');
+assert.strictEqual(nintendoDistribution.tradeDate, '2026-6-29');
+assert.strictEqual(nintendoDistribution.quantity, 100);
+assert.strictEqual(nintendoDistribution.settlementAmount, 14105);
+assert.ok(nvdaDistribution);
+assert.strictEqual(nvdaDistribution.assetType, 'US_STOCK');
+assert.strictEqual(nvdaDistribution.code, 'NVDA');
+assert.strictEqual(nvdaDistribution.side, 'DIVIDEND');
+assert.strictEqual(nvdaDistribution.settlementAmount, 37);
+assert.ok(mmfDistribution);
+assert.strictEqual(mmfDistribution.assetType, 'FUND');
+assert.strictEqual(mmfDistribution.side, 'DISTRIBUTION');
+assert.strictEqual(mmfDistribution.symbol, 'FUND:ＳＢＩ岡三・ＵＳドル・マネー・マーケット・ファンド');
+assert.strictEqual(mmfDistribution.settlementAmount, 38.58);
 
 var fxRows = parseFxCsv(fs.readFileSync('samples/kessai20260610.csv'), 'kessai20260610.csv');
 assert.ok(fxRows.length > 0);

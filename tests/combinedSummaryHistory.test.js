@@ -4,6 +4,7 @@ var historyLib = require('../lib/combinedSummaryHistory');
 var buildCombinedSummaryHistory = historyLib.buildCombinedSummaryHistory;
 var buildCombinedSummaryTotals = historyLib.buildCombinedSummaryTotals;
 var buildFxSummary = historyLib.buildFxSummary;
+var normalizeDateText = historyLib.normalizeDateText;
 
 var transactions = [
   {
@@ -41,6 +42,19 @@ var transactions = [
     quantity: 50,
     unitPrice: 1200,
     settlementAmount: 60000
+  },
+  {
+    tradeDate: '2026-6-29',
+    tradeDateTime: '2026-6-29T12:00:00',
+    assetType: 'STOCK',
+    code: '7974',
+    symbol: '7974.T',
+    assetName: 'Nintendo',
+    side: 'DIVIDEND',
+    quantity: 100,
+    distributionAmountJpy: 14105,
+    settlementAmount: 14105,
+    settlementCurrency: 'JPY'
   }
 ];
 
@@ -64,10 +78,12 @@ var assetsBySymbol = {
 
 var priceHistoryBySymbol = {
   '7974.T': [
+    { symbol: '7974.T', priceDate: '2026-06-30', close: 1200 },
     { symbol: '7974.T', priceDate: '2026-06-18', close: 1300 },
     { symbol: '7974.T', priceDate: '2026-06-17', close: 1250 }
   ],
   '7936.T': [
+    { symbol: '7936.T', priceDate: '2026-06-30', close: 2200 },
     { symbol: '7936.T', priceDate: '2026-06-18', close: 2500 },
     { symbol: '7936.T', priceDate: '2026-06-17', close: 2400 }
   ]
@@ -78,8 +94,10 @@ var history = buildCombinedSummaryHistory({
   fxTrades: fxTrades,
   assetsBySymbol: assetsBySymbol,
   priceHistoryBySymbol: priceHistoryBySymbol,
-  today: '2026-06-19'
+  today: '2026-06-30'
 });
+
+assert.strictEqual(normalizeDateText('2026-6-29T12:00:00'), '2026-06-29');
 
 var currentReport = buildPortfolioSummaryReport(transactions, assetsBySymbol, priceHistoryBySymbol);
 var currentFxSummary = buildFxSummary(fxTrades);
@@ -97,13 +115,34 @@ var may = history.monthly.filter(function (row) {
 
 assert.deepStrictEqual(currentMonth.totals, currentCombinedTotals);
 assert.deepStrictEqual(currentYear.totals, currentCombinedTotals);
-assert.strictEqual(currentMonth.txCount, 3);
+assert.strictEqual(currentMonth.txCount, 4);
 assert.strictEqual(currentMonth.fxTxCount, 1);
 assert.strictEqual(may.txCount, 1);
 assert.strictEqual(may.fxTxCount, 0);
 assert.strictEqual(may.totals.fxTotalPl, 0);
+assert.strictEqual(currentMonth.totals.portfolioRealizedPl, 24105);
 assert.strictEqual(currentMonth.combinedTotalPlDiff, currentMonth.totals.combinedTotalPl - may.totals.combinedTotalPl);
 assert.strictEqual(may.combinedTotalPlDiff, null);
 assert.strictEqual(currentYear.combinedTotalPlDiff, null);
+
+var julyHistory = buildCombinedSummaryHistory({
+  transactions: transactions,
+  fxTrades: fxTrades,
+  assetsBySymbol: assetsBySymbol,
+  priceHistoryBySymbol: priceHistoryBySymbol,
+  today: '2026-07-03'
+});
+var julyCurrent = julyHistory.monthly.filter(function (row) {
+  return row.key == '2026-07';
+})[0];
+var juneHistorical = julyHistory.monthly.filter(function (row) {
+  return row.key == '2026-06';
+})[0];
+
+assert.strictEqual(julyCurrent.totals.portfolioMarketValue, 315000);
+assert.strictEqual(juneHistorical.totals.portfolioMarketValue, 280000);
+assert.strictEqual(juneHistorical.totals.portfolioUnrealizedPl, 30000);
+assert.strictEqual(juneHistorical.totals.portfolioTotalPl, 54105);
+assert.strictEqual(julyCurrent.combinedTotalPlDiff, julyCurrent.totals.combinedTotalPl - juneHistorical.totals.combinedTotalPl);
 
 console.log('combinedSummaryHistory tests passed');

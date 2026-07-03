@@ -109,13 +109,17 @@
       Older rows are period cutoffs using the currently saved latest prices.
     </div>
 
+    <% function equalMoney(a, b) {
+      return Math.round(Number(a || 0) * 100) == Math.round(Number(b || 0) * 100);
+    } %>
+
     <% function renderRows(rows) { %>
       <% for (var i = 0; i < rows.length; i++) { %>
         <% var totals = rows[i].totals; %>
         <% var currentMatches = rows[i].isCurrent
-          && totals.combinedTotalPl == currentCombinedTotals.combinedTotalPl
-          && totals.combinedRealizedPl == currentCombinedTotals.combinedRealizedPl
-          && totals.portfolioMarketValue == currentCombinedTotals.portfolioMarketValue; %>
+          && equalMoney(totals.combinedTotalPl, currentCombinedTotals.combinedTotalPl)
+          && equalMoney(totals.combinedRealizedPl, currentCombinedTotals.combinedRealizedPl)
+          && equalMoney(totals.portfolioMarketValue, currentCombinedTotals.portfolioMarketValue); %>
         <tr>
           <td><%= rows[i].label %><%= rows[i].isCurrent ? ' (current)' : '' %></td>
           <td><%= rows[i].endDate %></td>

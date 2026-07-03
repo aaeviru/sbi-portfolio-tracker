@@ -249,6 +249,7 @@
             <th>Prev Price Date</th>
             <th>Price Date / Status</th>
             <th>FIFO Realized P/L</th>
+            <th>Income</th>
             <th>Unrealized P/L</th>
             <th>Unrealized P/L %</th>
             <th>Day P/L</th>
@@ -307,6 +308,7 @@
                 <% } %>
               </td>
               <td class="number <%= listitem[i].fifoRealizedPl < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].fifoRealizedPl %>"></td>
+              <td class="number <%= listitem[i].incomeAmount < 0 ? 'negative' : '' %>" title="Dividend: <%= listitem[i].dividendIncome || 0 %>, Distribution: <%= listitem[i].distributionIncome || 0 %>" data-number="<%= listitem[i].incomeAmount || 0 %>"></td>
               <% if (listitem[i].unrealizedPl != null) { %>
                 <td class="number <%= listitem[i].unrealizedPl < 0 ? 'negative' : '' %>" data-number="<%= listitem[i].unrealizedPl %>"></td>
               <% } else { %>
