@@ -51,6 +51,51 @@
       font-size: 14px;
     }
 
+    .indicator-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      margin: 12px 0;
+      padding: 10px 12px;
+      border: 1px solid #c9d7df;
+    }
+
+    .indicator-controls legend {
+      padding: 0 6px;
+      font-size: 13px;
+      font-weight: bold;
+    }
+
+    .indicator-controls .indicator-option {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin: 0;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .indicator-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      min-height: 20px;
+      margin: 8px 0;
+      font-size: 12px;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .legend-swatch {
+      width: 18px;
+      height: 3px;
+      background: var(--swatch);
+    }
+
     .summary {
       display: flex;
       flex-wrap: wrap;
@@ -77,6 +122,15 @@
       min-width: 900px;
       width: 100%;
       height: 460px;
+    }
+
+    svg.indicator-chart {
+      height: 180px;
+      border-top: 1px solid #d7e1e7;
+    }
+
+    svg[hidden] {
+      display: none;
     }
 
     .axis {
@@ -114,6 +168,70 @@
     .history-range {
       stroke: #9abbd6;
       stroke-width: 1;
+    }
+
+    .sma20-line,
+    .sma50-line,
+    .sma200-line,
+    .bollinger-line,
+    .rsi-line,
+    .macd-line,
+    .macd-signal-line {
+      fill: none;
+      stroke-width: 1.5;
+    }
+
+    .sma20-line {
+      stroke: #00897b;
+    }
+
+    .sma50-line {
+      stroke: #d58a00;
+    }
+
+    .sma200-line {
+      stroke: #8e3b73;
+      stroke-width: 2;
+    }
+
+    .bollinger-line {
+      stroke: #6b7d8a;
+      stroke-width: 1;
+    }
+
+    .bollinger-area {
+      fill: #d7e4ec;
+      opacity: 0.42;
+      stroke: none;
+    }
+
+    .rsi-line {
+      stroke: #147d64;
+      stroke-width: 2;
+    }
+
+    .rsi-threshold {
+      stroke: #c6a15b;
+      stroke-width: 1;
+      stroke-dasharray: 5 4;
+    }
+
+    .macd-line {
+      stroke: #2563a6;
+      stroke-width: 2;
+    }
+
+    .macd-signal-line {
+      stroke: #cf6b26;
+      stroke-width: 1.5;
+    }
+
+    .macd-positive {
+      fill: #8bbf9f;
+    }
+
+    .macd-negative {
+      fill: #e3a09a;
     }
 
     .buy {
@@ -222,8 +340,21 @@
 
       <div id="assetSummary" class="summary"></div>
 
+      <fieldset class="indicator-controls">
+        <legend>Technical indicators</legend>
+        <label class="indicator-option"><input type="checkbox" id="showSma20" checked> SMA 20</label>
+        <label class="indicator-option"><input type="checkbox" id="showSma50" checked> SMA 50</label>
+        <label class="indicator-option"><input type="checkbox" id="showSma200" checked> SMA 200</label>
+        <label class="indicator-option"><input type="checkbox" id="showBollinger" checked> Bollinger 20/2</label>
+        <label class="indicator-option"><input type="checkbox" id="showRsi" checked> RSI 14</label>
+        <label class="indicator-option"><input type="checkbox" id="showMacd" checked> MACD 12/26/9</label>
+      </fieldset>
+      <div id="indicatorLegend" class="indicator-legend" aria-label="Chart legend"></div>
+
       <div class="chart-wrap">
         <svg id="tradeChart" viewBox="0 0 900 460" role="img" aria-label="Buy and sell price chart"></svg>
+        <svg id="rsiChart" class="indicator-chart" viewBox="0 0 900 180" role="img" aria-label="RSI 14 chart"></svg>
+        <svg id="macdChart" class="indicator-chart" viewBox="0 0 900 180" role="img" aria-label="MACD 12 26 9 chart"></svg>
       </div>
 
       <table>
@@ -405,10 +536,62 @@
       return text;
     }
 
+    function indicatorEnabled(id) {
+      var control = document.getElementById(id);
+      return !!(control && control.checked);
+    }
+
+    function appendLine(svg, rows, valueForRow, xFor, yFor, className, titleText) {
+      var points = rows.filter(function (row) {
+        return Number.isFinite(valueForRow(row));
+      }).map(function (row) {
+        return xFor(row.date) + ',' + yFor(valueForRow(row));
+      }).join(' ');
+      if (!points) {
+        return;
+      }
+
+      var line = svgEl('polyline', { points: points, class: className });
+      if (titleText) {
+        var title = svgEl('title');
+        title.textContent = titleText;
+        line.appendChild(title);
+      }
+      svg.appendChild(line);
+    }
+
+    function renderIndicatorLegend() {
+      var legend = document.getElementById('indicatorLegend');
+      legend.innerHTML = '';
+      [
+        { label: 'Close', color: '#2b6da8', enabled: true },
+        { label: 'SMA 20', color: '#00897b', enabled: indicatorEnabled('showSma20') },
+        { label: 'SMA 50', color: '#d58a00', enabled: indicatorEnabled('showSma50') },
+        { label: 'SMA 200', color: '#8e3b73', enabled: indicatorEnabled('showSma200') },
+        { label: 'Bollinger 20/2', color: '#6b7d8a', enabled: indicatorEnabled('showBollinger') },
+        { label: 'RSI 14', color: '#147d64', enabled: indicatorEnabled('showRsi') },
+        { label: 'MACD', color: '#2563a6', enabled: indicatorEnabled('showMacd') },
+        { label: 'MACD signal', color: '#cf6b26', enabled: indicatorEnabled('showMacd') }
+      ].filter(function (item) {
+        return item.enabled;
+      }).forEach(function (item) {
+        var wrapper = document.createElement('span');
+        wrapper.className = 'legend-item';
+        var swatch = document.createElement('span');
+        swatch.className = 'legend-swatch';
+        swatch.style.setProperty('--swatch', item.color);
+        var label = document.createElement('span');
+        label.textContent = item.label;
+        wrapper.appendChild(swatch);
+        wrapper.appendChild(label);
+        legend.appendChild(wrapper);
+      });
+    }
+
     function renderSummary(asset) {
       var summary = document.getElementById('assetSummary');
       summary.innerHTML = '';
-      [
+      var values = [
         asset.displaySymbol + ' / ' + asset.name,
         asset.assetType,
         asset.priceUnit,
@@ -416,16 +599,152 @@
         'SELL ' + asset.sellCount,
         'Trades ' + asset.firstDate + ' to ' + asset.lastDate,
         'History ' + (asset.historyCount || 0) + (asset.historyFirstDate ? ' / ' + asset.historyFirstDate + ' to ' + asset.historyLastDate : '')
-      ].forEach(function (value) {
+      ];
+      var technical = asset.technicalIndicators || {};
+      values.push('Indicators ' + (technical.status || 'NO_HISTORY'));
+      if (technical.rsi14 != null) {
+        values.push('RSI 14 ' + formatNumber(technical.rsi14));
+      }
+      if (technical.realizedVolatility20DayAnnualizedPercent != null) {
+        values.push('20d volatility ' + formatNumber(technical.realizedVolatility20DayAnnualizedPercent) + '%');
+      }
+      if (technical.range52Week) {
+        values.push('52w high / low ' + formatNumber(technical.range52Week.high) + ' / ' + formatNumber(technical.range52Week.low));
+        values.push('Drawdown ' + formatNumber(technical.range52Week.drawdownPercent) + '%');
+      }
+      values.forEach(function (value) {
         var item = document.createElement('span');
         item.textContent = value;
         summary.appendChild(item);
       });
     }
 
+    function renderRsiChart(rows, minDate, maxDate) {
+      var svg = document.getElementById('rsiChart');
+      svg.innerHTML = '';
+      svg.hidden = !indicatorEnabled('showRsi');
+      if (svg.hidden) {
+        return;
+      }
+
+      var width = 900;
+      var height = 180;
+      var left = 78;
+      var right = 28;
+      var top = 24;
+      var bottom = 24;
+      var innerWidth = width - left - right;
+      var innerHeight = height - top - bottom;
+      var validRows = rows.filter(function (row) { return row.rsi14 != null; });
+
+      setText(svg, left, 16, 'RSI 14', 'axis-label');
+      if (!validRows.length) {
+        setText(svg, left, 88, 'Not enough price history for RSI 14.', 'empty');
+        return;
+      }
+
+      function xFor(date) {
+        return minDate === maxDate ? left + innerWidth / 2 :
+          left + ((dateValue(date) - minDate) / (maxDate - minDate)) * innerWidth;
+      }
+      function yFor(value) {
+        return top + (1 - (value / 100)) * innerHeight;
+      }
+
+      [30, 50, 70].forEach(function (value) {
+        var y = yFor(value);
+        svg.appendChild(svgEl('line', {
+          x1: left,
+          y1: y,
+          x2: width - right,
+          y2: y,
+          class: value === 50 ? 'grid' : 'rsi-threshold'
+        }));
+        setText(svg, left - 10, y + 4, value, 'axis-label', 'end');
+      });
+      svg.appendChild(svgEl('line', { x1: left, y1: top, x2: left, y2: height - bottom, class: 'axis' }));
+      svg.appendChild(svgEl('line', { x1: left, y1: height - bottom, x2: width - right, y2: height - bottom, class: 'axis' }));
+      appendLine(svg, validRows, function (row) { return row.rsi14; }, xFor, yFor, 'rsi-line', 'RSI 14');
+    }
+
+    function renderMacdChart(rows, minDate, maxDate) {
+      var svg = document.getElementById('macdChart');
+      svg.innerHTML = '';
+      svg.hidden = !indicatorEnabled('showMacd');
+      if (svg.hidden) {
+        return;
+      }
+
+      var width = 900;
+      var height = 180;
+      var left = 78;
+      var right = 28;
+      var top = 24;
+      var bottom = 24;
+      var innerWidth = width - left - right;
+      var innerHeight = height - top - bottom;
+      var validRows = rows.filter(function (row) { return !!row.macd12_26_9; });
+
+      setText(svg, left, 16, 'MACD 12/26/9', 'axis-label');
+      if (!validRows.length) {
+        setText(svg, left, 88, 'Not enough price history for MACD 12/26/9.', 'empty');
+        return;
+      }
+
+      var values = [0];
+      validRows.forEach(function (row) {
+        values.push(row.macd12_26_9.line, row.macd12_26_9.signal, row.macd12_26_9.histogram);
+      });
+      var minValue = Math.min.apply(null, values);
+      var maxValue = Math.max.apply(null, values);
+      var padding = minValue === maxValue ? 1 : (maxValue - minValue) * 0.12;
+      minValue -= padding;
+      maxValue += padding;
+
+      function xFor(date) {
+        return minDate === maxDate ? left + innerWidth / 2 :
+          left + ((dateValue(date) - minDate) / (maxDate - minDate)) * innerWidth;
+      }
+      function yFor(value) {
+        return top + (1 - ((value - minValue) / (maxValue - minValue))) * innerHeight;
+      }
+
+      for (var i = 0; i <= 2; i++) {
+        var gridValue = maxValue - (maxValue - minValue) * (i / 2);
+        var gridY = yFor(gridValue);
+        svg.appendChild(svgEl('line', { x1: left, y1: gridY, x2: width - right, y2: gridY, class: 'grid' }));
+        setText(svg, left - 10, gridY + 4, formatNumber(gridValue), 'axis-label', 'end');
+      }
+      var zeroY = yFor(0);
+      svg.appendChild(svgEl('line', { x1: left, y1: zeroY, x2: width - right, y2: zeroY, class: 'axis' }));
+      svg.appendChild(svgEl('line', { x1: left, y1: top, x2: left, y2: height - bottom, class: 'axis' }));
+
+      var barWidth = Math.max(1, Math.min(6, innerWidth / Math.max(validRows.length, 1) * 0.7));
+      validRows.forEach(function (row) {
+        var value = row.macd12_26_9.histogram;
+        var valueY = yFor(value);
+        svg.appendChild(svgEl('rect', {
+          x: xFor(row.date) - barWidth / 2,
+          y: Math.min(valueY, zeroY),
+          width: barWidth,
+          height: Math.max(1, Math.abs(zeroY - valueY)),
+          class: value >= 0 ? 'macd-positive' : 'macd-negative'
+        }));
+      });
+      appendLine(svg, validRows, function (row) { return row.macd12_26_9.line; }, xFor, yFor, 'macd-line', 'MACD line');
+      appendLine(svg, validRows, function (row) { return row.macd12_26_9.signal; }, xFor, yFor, 'macd-signal-line', 'MACD signal');
+    }
+
     function renderChart(asset) {
       var svg = document.getElementById('tradeChart');
       svg.innerHTML = '';
+      var rsiSvg = document.getElementById('rsiChart');
+      var macdSvg = document.getElementById('macdChart');
+      rsiSvg.innerHTML = '';
+      macdSvg.innerHTML = '';
+      rsiSvg.hidden = !indicatorEnabled('showRsi');
+      macdSvg.hidden = !indicatorEnabled('showMacd');
+      renderIndicatorLegend();
 
       var width = 900;
       var height = 460;
@@ -437,6 +756,7 @@
       var innerHeight = height - top - bottom;
       var points = asset.points || [];
       var history = asset.priceHistory || [];
+      var indicatorSeries = asset.technicalIndicatorSeries || [];
       var range = document.getElementById('rangeSelect').value;
       var tickInterval = document.getElementById('tickSelect').value;
 
@@ -464,6 +784,9 @@
       var visibleHistory = history.filter(function (row) {
         return (!rangeStart || row.date >= rangeStart) && (!rangeMonths || row.date <= rangeEnd);
       });
+      var visibleIndicators = indicatorSeries.filter(function (row) {
+        return (!rangeStart || row.date >= rangeStart) && (!rangeMonths || row.date <= rangeEnd);
+      });
 
       updateRangeButtons(range, rangePage, rangeStart || allMinDateText, rangeEnd, allMinDateText, allMaxDateText);
 
@@ -485,6 +808,20 @@
             prices.push(price);
           }
         });
+      });
+      visibleIndicators.forEach(function (row) {
+        if (indicatorEnabled('showSma20') && positiveNumber(row.sma20) !== null) {
+          prices.push(row.sma20);
+        }
+        if (indicatorEnabled('showSma50') && positiveNumber(row.sma50) !== null) {
+          prices.push(row.sma50);
+        }
+        if (indicatorEnabled('showSma200') && positiveNumber(row.sma200) !== null) {
+          prices.push(row.sma200);
+        }
+        if (indicatorEnabled('showBollinger') && row.bollinger20_2) {
+          prices.push(row.bollinger20_2.lower, row.bollinger20_2.upper);
+        }
       });
       if (prices.length === 0) {
         setText(svg, 30, 50, 'No positive price values for this asset.', 'empty');
@@ -544,6 +881,32 @@
         }
       });
 
+      if (indicatorEnabled('showBollinger')) {
+        var bollingerRows = visibleIndicators.filter(function (row) {
+          return row.bollinger20_2 && positiveNumber(row.bollinger20_2.lower) !== null &&
+            positiveNumber(row.bollinger20_2.upper) !== null;
+        });
+        if (bollingerRows.length) {
+          var upperPoints = bollingerRows.map(function (row) {
+            return xFor(row.date) + ',' + yFor(row.bollinger20_2.upper);
+          });
+          var lowerPoints = bollingerRows.slice().reverse().map(function (row) {
+            return xFor(row.date) + ',' + yFor(row.bollinger20_2.lower);
+          });
+          svg.appendChild(svgEl('polygon', { points: upperPoints.concat(lowerPoints).join(' '), class: 'bollinger-area' }));
+          appendLine(svg, bollingerRows, function (row) { return row.bollinger20_2.upper; }, xFor, yFor, 'bollinger-line', 'Bollinger upper band');
+          appendLine(svg, bollingerRows, function (row) { return row.bollinger20_2.lower; }, xFor, yFor, 'bollinger-line', 'Bollinger lower band');
+        }
+      }
+      if (indicatorEnabled('showSma20')) {
+        appendLine(svg, visibleIndicators, function (row) { return row.sma20; }, xFor, yFor, 'sma20-line', 'SMA 20');
+      }
+      if (indicatorEnabled('showSma50')) {
+        appendLine(svg, visibleIndicators, function (row) { return row.sma50; }, xFor, yFor, 'sma50-line', 'SMA 50');
+      }
+      if (indicatorEnabled('showSma200')) {
+        appendLine(svg, visibleIndicators, function (row) { return row.sma200; }, xFor, yFor, 'sma200-line', 'SMA 200');
+      }
       if (visibleHistory.length > 0) {
         var historyLinePoints = visibleHistory.filter(function (row) {
           return positiveNumber(row.close) !== null;
@@ -578,6 +941,8 @@
         marker.appendChild(title);
         svg.appendChild(marker);
       });
+      renderRsiChart(visibleIndicators, minDate, maxDate);
+      renderMacdChart(visibleIndicators, minDate, maxDate);
     }
 
     function paginateRows(rows, page) {
@@ -732,6 +1097,16 @@
         renderSelectedAsset();
       });
       document.getElementById('tickSelect').addEventListener('change', renderSelectedAsset);
+      [
+        'showSma20',
+        'showSma50',
+        'showSma200',
+        'showBollinger',
+        'showRsi',
+        'showMacd'
+      ].forEach(function (id) {
+        document.getElementById(id).addEventListener('change', renderSelectedAsset);
+      });
       document.getElementById('olderRangeButton').addEventListener('click', function () {
         rangePage++;
         renderSelectedAsset();

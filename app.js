@@ -233,6 +233,29 @@ function cleanCsvValue(value) {
   return value;
 }
 
+function normalizeFundAssetName(name) {
+  name = cleanCsvValue(name);
+  if (!name) {
+    return '';
+  }
+
+  if (/ＳＢＩ岡三・ＵＳドル・マネー・マーケット・ファンド/.test(name)) {
+    return name.replace(/（米ドル）$/, '');
+  }
+
+  return name;
+}
+
+function normalizeAssetName(row) {
+  if (!row) {
+    return '';
+  }
+  if (row.assetType == 'FUND' || isFundLikeName(row.assetName) || isMmfProduct(row)) {
+    return normalizeFundAssetName(row.assetName);
+  }
+  return cleanCsvValue(row.assetName);
+}
+
 function isNumber(value) {
   return typeof value == 'number' && !isNaN(value);
 }
@@ -355,7 +378,7 @@ function makeSymbol(row) {
     return normalizeStockCode(row.code) + '.T';
   }
 
-  return 'FUND:' + row.assetName;
+  return 'FUND:' + normalizeAssetName(row);
 }
 
 function makeTradeTime(side) {
@@ -464,6 +487,8 @@ function parseSbiDistributionText(text, sourceFile) {
 
     row.assetType = normalizeAssetType(row);
     row.assetSubType = isMmfProduct(row) ? 'MMF' : '';
+    row.sourceAssetName = row.assetName;
+    row.assetName = normalizeAssetName(row);
     row.symbol = makeSymbol(row);
     row.side = row.assetType == 'FUND' ? 'DISTRIBUTION' : 'DIVIDEND';
     row.tradeTime = makeTradeTime(row.side);
@@ -475,7 +500,7 @@ function parseSbiDistributionText(text, sourceFile) {
       row.tradeDate,
       row.productCategory,
       row.account,
-      row.assetName,
+      row.sourceAssetName,
       row.code,
       row.quantity,
       row.settlementAmount,
@@ -614,6 +639,8 @@ function parseSbiCsv(buffer, sourceFile) {
     var sourceHashPrice = row.price;
     row.assetType = normalizeAssetType(row);
     row.assetSubType = isMmfProduct(row) ? 'MMF' : '';
+    row.sourceAssetName = row.assetName;
+    row.assetName = normalizeAssetName(row);
     if (row.assetSubType == 'MMF') {
       var mmfPrice = parseSbiMmfPrice(parser == 'FOREIGN_STOCK' ? raw['約定単価'] : raw['約定単価']);
       if (mmfPrice) {
@@ -639,7 +666,7 @@ function parseSbiCsv(buffer, sourceFile) {
 
     var hashSource = [
       row.tradeDate,
-      row.assetName,
+      row.sourceAssetName,
       row.code,
       row.action,
       row.quantity,
@@ -2400,6 +2427,8 @@ module.exports = {
   verifyJwt: verifyJwt,
   normalizeNextPath: normalizeNextPath,
   normalizeAssetType: normalizeAssetType,
+  normalizeFundAssetName: normalizeFundAssetName,
+  normalizeAssetName: normalizeAssetName,
   makeSymbol: makeSymbol,
   parseSbiMmfPrice: parseSbiMmfPrice,
   parseSbiDistributionCsv: parseSbiDistributionCsv,

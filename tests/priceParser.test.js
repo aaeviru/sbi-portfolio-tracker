@@ -7,6 +7,7 @@ var parseFxCsv = priceParsers.parseFxCsv;
 var parseGoldCsv = priceParsers.parseGoldCsv;
 var buildCombinedSummaryTotals = priceParsers.buildCombinedSummaryTotals;
 var normalizeAssetType = priceParsers.normalizeAssetType;
+var normalizeFundAssetName = priceParsers.normalizeFundAssetName;
 var makeSymbol = priceParsers.makeSymbol;
 var parseSbiMmfPrice = priceParsers.parseSbiMmfPrice;
 var calculateGoldPricePerGramJpy = priceParsers.calculateGoldPricePerGramJpy;
@@ -81,6 +82,14 @@ var usdMoneyMarketFundRow = {
 usdMoneyMarketFundRow.assetType = normalizeAssetType(usdMoneyMarketFundRow);
 assert.strictEqual(usdMoneyMarketFundRow.assetType, 'FUND');
 assert.strictEqual(makeSymbol(usdMoneyMarketFundRow), 'FUND:ＳＢＩ岡三・ＵＳドル・マネー・マーケット・ファンド');
+assert.strictEqual(
+  normalizeFundAssetName('ＳＢＩ岡三・ＵＳドル・マネー・マーケット・ファンド（米ドル）'),
+  'ＳＢＩ岡三・ＵＳドル・マネー・マーケット・ファンド'
+);
+assert.strictEqual(makeSymbol({
+  assetType: 'FUND',
+  assetName: 'ＳＢＩ岡三・ＵＳドル・マネー・マーケット・ファンド（米ドル）'
+}), 'FUND:ＳＢＩ岡三・ＵＳドル・マネー・マーケット・ファンド');
 assert.deepStrictEqual(parseSbiMmfPrice('0.0100USD(161.87円)'), {
   usdUnitPrice: 0.01,
   fxRate: 161.87,
