@@ -233,6 +233,7 @@ assert.ok(html.indexOf('Technical indicators') >= 0);
 assert.ok(html.indexOf('showSma200') >= 0);
 assert.ok(html.indexOf('id="rsiChart"') >= 0);
 assert.ok(html.indexOf('id="macdChart"') >= 0);
+assert.ok(html.indexOf("var rows = (asset.points || []).slice().reverse();") >= 0);
 var scripts = html.match(/<script[^>]*>[\s\S]*?<\/script>/g) || [];
 scripts.forEach(function (script, index) {
   var source = script.replace(/^<script[^>]*>/, '').replace(/<\/script>$/, '');

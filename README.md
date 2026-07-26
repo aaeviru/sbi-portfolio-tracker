@@ -110,6 +110,22 @@ $env:OPENAI_WEB_SEARCH_TOOL="web_search"
 
 Reports are for personal analysis only. They are not investment, legal, or tax advice.
 
+## Optional J-Quants Setup
+
+J-Quants Free supplies up to two years of Japanese stock daily history with a 12-week delay. Enter the key without echoing it, save it as a user environment variable, and also load it into the current PowerShell session before starting the app:
+
+```powershell
+$secret = Read-Host "Enter your J-Quants API key" -AsSecureString
+$key = [System.Net.NetworkCredential]::new("", $secret).Password
+[Environment]::SetEnvironmentVariable("JQUANTS_API_KEY", $key, "User")
+$env:JQUANTS_API_KEY = $key
+Remove-Variable secret, key
+Write-Host (-not [string]::IsNullOrWhiteSpace($env:JQUANTS_API_KEY))
+npm start
+```
+
+The check must print `True`. The key is read only by the server and is not saved in SQLite, browser storage, or Git.
+
 ## Docker
 
 The Docker image uses a multi-stage `node:24-alpine` build so the runtime image avoids Debian Perl packages that are commonly flagged by vulnerability scans.
@@ -205,14 +221,18 @@ Current behavior:
 
 - Skips assets with zero net quantity.
 - Fetches latest stock prices from Yahoo-compatible chart data.
+- For Japanese stock history, Yahoo supplies the newest 12 weeks and J-Quants Free supplies older dates within its two-year history limit. Yahoo is also the fallback for any period before that limit when the first BUY is older.
+- A successful J-Quants range request is recorded per stock, including a valid no-data result, so later price refreshes do not request the same range again.
 - Fetches mapped fund prices only when a fund mapping URL/code is saved.
 - Fetches gold price and converts it to JPY per gram.
 - Saves stock daily OHLC price history.
 - Saves mapped fund NAV history. Fund NAV is stored per 10,000 units for charting and converted back to unit price for summary valuation.
 - Saves gold daily history by combining `GC=F` gold futures with `JPY=X` USD/JPY and converting each date to JPY per gram.
 - Saves a latest-price snapshot row when the latest quote succeeds but the daily history endpoint has no row yet.
-- Fetches at most a 30-day price-history window per click.
-- Price history starts from the oldest BUY date for each held stock, fund, or gold position.
+- Fetches J-Quants Free's eligible range in one logical request per Japanese stock and records completed subranges so they are not requested again. Pagination may add HTTP requests.
+- Paces J-Quants requests at 12.5-second intervals for the Free-plan rate limit.
+- Fetches up to 30 days per Yahoo recent-history request and up to 365 days per Yahoo archive request.
+- Price history starts from the earlier of two years ago or the oldest BUY date for each held stock, fund, or gold position.
 - Uses a delay between asset requests and stops on rate limits.
 
 For US stocks, chart comparison dates are shifted to the US market date when needed, while the original SBI transaction date remains visible in tables.
@@ -232,7 +252,7 @@ Use the `Detail` button on a monthly or yearly row to see why the period changed
 
 ## Data Source Caveat
 
-Stock and gold price history use Yahoo-compatible chart data. Gold JPY/gram history also depends on USD/JPY chart data. Fund price history uses Yahoo Japan's frontend fund-history endpoint with a short-lived page token. That fund endpoint is not a documented public API, so it should be treated as best-effort for local personal use.
+Recent stock and gold price history use Yahoo-compatible chart data. Older Japanese stock history uses the official J-Quants API when `JQUANTS_API_KEY` is configured. Gold JPY/gram history also depends on USD/JPY chart data. Fund price history uses Yahoo Japan's frontend fund-history endpoint with a short-lived page token. That fund endpoint is not a documented public API, so it should be treated as best-effort for local personal use.
 
 If Yahoo changes a token, endpoint, or response shape, history backfill may fail. The app should keep showing clear fetch errors and can still use latest-price snapshots as a fallback.
 
@@ -246,6 +266,8 @@ The trade chart can show:
 - all data
 
 The x-axis can be labeled weekly, monthly, or yearly. For ranges smaller than all data, use Previous/Next to page the visible window.
+
+The chart's trade-history table lists BUY and SELL records newest first.
 
 ## Tests
 

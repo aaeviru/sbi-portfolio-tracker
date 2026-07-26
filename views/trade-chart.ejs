@@ -1034,7 +1034,8 @@
     function renderRows(asset) {
       var body = document.getElementById('tradeRows');
       body.innerHTML = '';
-      var pageInfo = paginateRows(asset.points || [], tradeRowsPage);
+      var rows = (asset.points || []).slice().reverse();
+      var pageInfo = paginateRows(rows, tradeRowsPage);
       tradeRowsPage = pageInfo.page;
 
       pageInfo.rows.forEach(function (point) {
