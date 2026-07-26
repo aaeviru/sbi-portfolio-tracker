@@ -4,6 +4,7 @@ var fs = require('fs');
 var path = require('path')
 var crypto = require('crypto');
 var TextDecoder = require('util').TextDecoder;
+var APP_VERSION = require('./package.json').version;
 var buildPortfolioSummary = require('./lib/portfolioSummary').buildPortfolioSummary;
 var buildPortfolioSummaryReport = require('./lib/portfolioSummary').buildPortfolioSummaryReport;
 var combinedSummaryHistoryLib = require('./lib/combinedSummaryHistory');
@@ -34,6 +35,7 @@ var priceRefreshJob = {
   error: ''
 };
 app.set('view engine', 'ejs');
+app.locals.appVersion = APP_VERSION;
 app.use(express.static('public'));
 const bodyParser = require('body-parser')
 
@@ -2741,6 +2743,7 @@ function parseFundPriceFromHtml(html, sourceUrl) {
 }
 
 module.exports = {
+  appVersion: APP_VERSION,
   signJwt: signJwt,
   verifyJwt: verifyJwt,
   normalizeNextPath: normalizeNextPath,

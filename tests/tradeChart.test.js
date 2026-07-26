@@ -227,8 +227,10 @@ assert.strictEqual(fund.technicalIndicators.status, 'PARTIAL');
 var viewPath = path.join(__dirname, '..', 'views', 'trade-chart.ejs');
 var html = ejs.render(fs.readFileSync(viewPath, 'utf8'), {
   assets: assets,
-  chartDataJson: JSON.stringify(assets)
+  chartDataJson: JSON.stringify(assets),
+  appVersion: require('../package.json').version
 }, { filename: viewPath });
+assert.ok(html.indexOf('v' + require('../package.json').version) >= 0);
 assert.ok(html.indexOf('Technical indicators') >= 0);
 assert.ok(html.indexOf('showSma200') >= 0);
 assert.ok(html.indexOf('id="rsiChart"') >= 0);
