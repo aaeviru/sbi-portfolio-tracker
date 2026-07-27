@@ -4,6 +4,7 @@ var fs = require('fs');
 var path = require('path')
 var crypto = require('crypto');
 var TextDecoder = require('util').TextDecoder;
+var APP_VERSION = require('./package.json').version;
 var buildPortfolioSummary = require('./lib/portfolioSummary').buildPortfolioSummary;
 var buildPortfolioSummaryReport = require('./lib/portfolioSummary').buildPortfolioSummaryReport;
 var combinedSummaryHistoryLib = require('./lib/combinedSummaryHistory');
@@ -34,6 +35,7 @@ var priceRefreshJob = {
   error: ''
 };
 app.set('view engine', 'ejs');
+app.locals.appVersion = APP_VERSION;
 app.use(express.static('public'));
 const bodyParser = require('body-parser')
 
@@ -233,6 +235,29 @@ function cleanCsvValue(value) {
   return value;
 }
 
+function normalizeFundAssetName(name) {
+  name = cleanCsvValue(name);
+  if (!name) {
+    return '';
+  }
+
+  if (/ＳＢＩ岡三・ＵＳドル・マネー・マーケット・ファンド/.test(name)) {
+    return name.replace(/（米ドル）$/, '');
+  }
+
+  return name;
+}
+
+function normalizeAssetName(row) {
+  if (!row) {
+    return '';
+  }
+  if (row.assetType == 'FUND' || isFundLikeName(row.assetName) || isMmfProduct(row)) {
+    return normalizeFundAssetName(row.assetName);
+  }
+  return cleanCsvValue(row.assetName);
+}
+
 function isNumber(value) {
   return typeof value == 'number' && !isNaN(value);
 }
@@ -355,7 +380,7 @@ function makeSymbol(row) {
     return normalizeStockCode(row.code) + '.T';
   }
 
-  return 'FUND:' + row.assetName;
+  return 'FUND:' + normalizeAssetName(row);
 }
 
 function makeTradeTime(side) {
@@ -464,6 +489,8 @@ function parseSbiDistributionText(text, sourceFile) {
 
     row.assetType = normalizeAssetType(row);
     row.assetSubType = isMmfProduct(row) ? 'MMF' : '';
+    row.sourceAssetName = row.assetName;
+    row.assetName = normalizeAssetName(row);
     row.symbol = makeSymbol(row);
     row.side = row.assetType == 'FUND' ? 'DISTRIBUTION' : 'DIVIDEND';
     row.tradeTime = makeTradeTime(row.side);
@@ -475,7 +502,7 @@ function parseSbiDistributionText(text, sourceFile) {
       row.tradeDate,
       row.productCategory,
       row.account,
-      row.assetName,
+      row.sourceAssetName,
       row.code,
       row.quantity,
       row.settlementAmount,
@@ -614,6 +641,8 @@ function parseSbiCsv(buffer, sourceFile) {
     var sourceHashPrice = row.price;
     row.assetType = normalizeAssetType(row);
     row.assetSubType = isMmfProduct(row) ? 'MMF' : '';
+    row.sourceAssetName = row.assetName;
+    row.assetName = normalizeAssetName(row);
     if (row.assetSubType == 'MMF') {
       var mmfPrice = parseSbiMmfPrice(parser == 'FOREIGN_STOCK' ? raw['約定単価'] : raw['約定単価']);
       if (mmfPrice) {
@@ -639,7 +668,7 @@ function parseSbiCsv(buffer, sourceFile) {
 
     var hashSource = [
       row.tradeDate,
-      row.assetName,
+      row.sourceAssetName,
       row.code,
       row.action,
       row.quantity,
@@ -1693,6 +1722,134 @@ function fetchYahooChartDailyPriceHistory(asset, startDate, endDate, callback) {
   });
 }
 
+function normalizeJQuantsDate(value) {
+  value = String(value || '');
+  if (/^\d{8}$/.test(value)) {
+    return value.slice(0, 4) + '-' + value.slice(4, 6) + '-' + value.slice(6, 8);
+  }
+  return isValidDateText(value) ? value : '';
+}
+
+function optionalApiNumber(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  var number = Number(value);
+  return isFinite(number) ? number : null;
+}
+
+function parseJQuantsDailyPriceHistory(json, asset) {
+  var data = Array.isArray(json) ? json : json && json.data;
+  if (!Array.isArray(data)) {
+    return [];
+  }
+
+  return data.map(function (item) {
+    var priceDate = normalizeJQuantsDate(item.Date);
+    var close = optionalApiNumber(item.C);
+    if (!priceDate || close === null) {
+      return null;
+    }
+    return {
+      symbol: asset.symbol,
+      assetType: asset.assetType,
+      priceDate: priceDate,
+      currency: 'JPY',
+      open: optionalApiNumber(item.O),
+      high: optionalApiNumber(item.H),
+      low: optionalApiNumber(item.L),
+      close: close,
+      volume: optionalApiNumber(item.Vo),
+      tradingValue: optionalApiNumber(item.Va),
+      adjustmentFactor: optionalApiNumber(item.AdjFactor),
+      adjustedOpen: optionalApiNumber(item.AdjO),
+      adjustedHigh: optionalApiNumber(item.AdjH),
+      adjustedLow: optionalApiNumber(item.AdjL),
+      adjustedClose: optionalApiNumber(item.AdjC),
+      adjustedVolume: optionalApiNumber(item.AdjVo),
+      source: 'JQUANTS',
+      fetchedAt: new Date(),
+      status: 'OK',
+      error: ''
+    };
+  }).filter(Boolean).sort(function (a, b) {
+    return a.priceDate.localeCompare(b.priceDate);
+  });
+}
+
+function getJQuantsSecurityCode(symbol) {
+  return String(symbol || '').replace(/\.T$/i, '');
+}
+
+var nextJQuantsRequestAt = 0;
+
+function fetchJQuantsText(url, apiKey, callback) {
+  var waitMs = Math.max(0, nextJQuantsRequestAt - Date.now());
+  nextJQuantsRequestAt = Math.max(Date.now(), nextJQuantsRequestAt) + 12500;
+  setTimeout(function () {
+    fetchTextWithHeaders(url, {
+      'x-api-key': apiKey,
+      'Accept': 'application/json',
+      'User-Agent': 'sbi-portfolio-tracker'
+    }, callback);
+  }, waitMs);
+}
+
+function fetchJQuantsDailyPriceHistory(asset, startDate, endDate, callback) {
+  var apiKey = process.env.JQUANTS_API_KEY;
+  if (!apiKey) {
+    callback(new Error('JQUANTS_API_KEY is not configured'));
+    return;
+  }
+
+  var code = getJQuantsSecurityCode(asset.symbol);
+  if (!code) {
+    callback(new Error('J-Quants security code not found'));
+    return;
+  }
+
+  var allItems = [];
+  var pageCount = 0;
+
+  function fetchPage(paginationKey) {
+    var url = 'https://api.jquants.com/v2/equities/bars/daily' +
+      '?code=' + encodeURIComponent(code) +
+      '&from=' + encodeURIComponent(startDate.replace(/-/g, '')) +
+      '&to=' + encodeURIComponent(endDate.replace(/-/g, ''));
+    if (paginationKey) {
+      url += '&pagination_key=' + encodeURIComponent(paginationKey);
+    }
+
+    fetchJQuantsText(url, apiKey, function (err, data) {
+      if (err) {
+        callback(err);
+        return;
+      }
+
+      try {
+        var json = JSON.parse(data);
+        if (Array.isArray(json.data)) {
+          allItems = allItems.concat(json.data);
+        }
+        pageCount++;
+        if (json.pagination_key && pageCount < 20) {
+          fetchPage(json.pagination_key);
+          return;
+        }
+
+        var rows = parseJQuantsDailyPriceHistory(allItems, asset).filter(function (row) {
+          return row.priceDate >= startDate && row.priceDate <= endDate;
+        });
+        callback(null, rows);
+      } catch (parseErr) {
+        callback(parseErr);
+      }
+    });
+  }
+
+  fetchPage('');
+}
+
 function buildGoldPriceHistoryRows(goldRows, fxRows, asset) {
   var fxByDate = {};
   var fxDates = [];
@@ -1795,6 +1952,39 @@ function addDays(dateText, days) {
   return date.toISOString().slice(0, 10);
 }
 
+function addYears(dateText, years) {
+  var date = new Date(dateText + 'T00:00:00Z');
+  if (isNaN(date.getTime())) {
+    return '';
+  }
+  date.setUTCFullYear(date.getUTCFullYear() + years);
+  return date.toISOString().slice(0, 10);
+}
+
+function previousWeekdayOnOrBefore(dateText) {
+  var date = dateText;
+  while (date) {
+    var day = new Date(date + 'T00:00:00Z').getUTCDay();
+    if (day !== 0 && day !== 6) {
+      return date;
+    }
+    date = addDays(date, -1);
+  }
+  return '';
+}
+
+function nextWeekdayOnOrAfter(dateText) {
+  var date = dateText;
+  while (date) {
+    var day = new Date(date + 'T00:00:00Z').getUTCDay();
+    if (day !== 0 && day !== 6) {
+      return date;
+    }
+    date = addDays(date, 1);
+  }
+  return '';
+}
+
 function isValidDateText(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) {
     return false;
@@ -1886,31 +2076,133 @@ function isPriceHistoryBoundsRow(row, asset) {
 }
 
 function getHistoryEndLimitDate(asset, today) {
-  if (asset && asset.assetType == 'GOLD') {
-    return addDays(today, -1);
+  if (asset && (asset.assetType == 'STOCK' || asset.assetType == 'US_STOCK' || asset.assetType == 'GOLD')) {
+    return previousWeekdayOnOrBefore(addDays(today, -1));
   }
   return today;
 }
 
-function findMissingHistoryDate(dates, startDate, endDate) {
-  var saved = {};
-  dates.forEach(function (date) {
-    saved[date] = true;
-  });
+function getPriceHistoryTargetStartDate(firstBuyDate, today) {
+  var twoYearsAgo = addYears(today, -2);
+  if (!isValidDateText(firstBuyDate)) {
+    return twoYearsAgo;
+  }
+  return minDateText(firstBuyDate, twoYearsAgo);
+}
 
-  for (var date = endDate; date >= startDate; date = addDays(date, -1)) {
-    if (!saved[date]) {
-      return date;
+function getPriceHistorySourceRanges(asset, today, targetStartDate) {
+  var historyEndLimit = getHistoryEndLimitDate(asset, today);
+  if (!isValidDateText(targetStartDate) || targetStartDate > historyEndLimit) {
+    return [];
+  }
+
+  if (asset && asset.assetType == 'STOCK') {
+    var jquantsCutoffDate = addDays(today, -84);
+    var jquantsEndDate = previousWeekdayOnOrBefore(jquantsCutoffDate);
+    var jquantsStartLimit = addYears(today, -2);
+    var yahooStartDate = nextWeekdayOnOrAfter(addDays(jquantsCutoffDate, 1));
+    var ranges = [];
+
+    if (maxDateText(targetStartDate, jquantsStartLimit) <= jquantsEndDate) {
+      ranges.push({
+        source: 'JQUANTS',
+        startDate: maxDateText(targetStartDate, jquantsStartLimit),
+        endDate: minDateText(historyEndLimit, jquantsEndDate)
+      });
     }
-    if (date == startDate) {
-      break;
+    if (yahooStartDate <= historyEndLimit) {
+      ranges.push({
+        source: 'YAHOO_CHART',
+        startDate: maxDateText(targetStartDate, yahooStartDate),
+        endDate: historyEndLimit
+      });
+    }
+    if (targetStartDate < jquantsStartLimit) {
+      ranges.push({
+        source: 'YAHOO_CHART_ARCHIVE',
+        startDate: targetStartDate,
+        endDate: previousWeekdayOnOrBefore(addDays(jquantsStartLimit, -1))
+      });
+    }
+    return ranges.filter(function (range) {
+      return range.startDate <= range.endDate;
+    });
+  }
+
+  var source = asset && asset.assetType == 'FUND'
+    ? 'YAHOO_FUND_HISTORY'
+    : asset && asset.assetType == 'GOLD'
+      ? 'YAHOO_GOLD_HISTORY'
+      : 'YAHOO_CHART';
+  return [{
+    source: source,
+    startDate: targetStartDate,
+    endDate: historyEndLimit
+  }];
+}
+
+function isPriceHistorySourceRangeCovered(asset, sourceRange) {
+  if (!asset || !sourceRange || sourceRange.source != 'JQUANTS') {
+    return false;
+  }
+  return isValidDateText(asset.priceHistoryJQuantsStartDate) &&
+    isValidDateText(asset.priceHistoryJQuantsEndDate) &&
+    asset.priceHistoryJQuantsStartDate <= sourceRange.startDate &&
+    asset.priceHistoryJQuantsEndDate >= sourceRange.endDate;
+}
+
+function getUncoveredPriceHistorySourceRanges(asset, sourceRanges) {
+  var uncovered = [];
+  sourceRanges.forEach(function (sourceRange) {
+    if (sourceRange.source != 'JQUANTS' ||
+      !isValidDateText(asset && asset.priceHistoryJQuantsStartDate) ||
+      !isValidDateText(asset && asset.priceHistoryJQuantsEndDate) ||
+      asset.priceHistoryJQuantsEndDate < sourceRange.startDate ||
+      asset.priceHistoryJQuantsStartDate > sourceRange.endDate) {
+      uncovered.push(sourceRange);
+      return;
+    }
+
+    if (asset.priceHistoryJQuantsStartDate > sourceRange.startDate) {
+      uncovered.push({
+        source: sourceRange.source,
+        startDate: sourceRange.startDate,
+        endDate: addDays(asset.priceHistoryJQuantsStartDate, -1)
+      });
+    }
+    if (asset.priceHistoryJQuantsEndDate < sourceRange.endDate) {
+      uncovered.push({
+        source: sourceRange.source,
+        startDate: addDays(asset.priceHistoryJQuantsEndDate, 1),
+        endDate: sourceRange.endDate
+      });
+    }
+  });
+  return uncovered.filter(function (sourceRange) {
+    return sourceRange.startDate <= sourceRange.endDate;
+  });
+}
+
+function findMissingHistoryDate(dates, startDate, endDate) {
+  var sortedDates = dates.filter(function (date) {
+    return date >= startDate && date <= endDate;
+  }).sort();
+
+  for (var index = sortedDates.length - 1; index > 0; index--) {
+    var newerDate = sortedDates[index];
+    var olderDate = sortedDates[index - 1];
+    var differenceMs = new Date(newerDate + 'T00:00:00Z').getTime() -
+      new Date(olderDate + 'T00:00:00Z').getTime();
+    if (differenceMs > 7 * 24 * 60 * 60 * 1000) {
+      return addDays(newerDate, -1);
     }
   }
 
   return '';
 }
 
-function getNextPriceHistoryWindow(bounds, targetStartDate, historyEndLimit) {
+function getNextPriceHistoryWindow(bounds, targetStartDate, historyEndLimit, windowDays) {
+  windowDays = Number(windowDays) > 0 ? Number(windowDays) : 30;
   var dates = (bounds.dates || []).filter(function (date) {
     return date >= targetStartDate && date <= historyEndLimit;
   }).sort();
@@ -1922,30 +2214,51 @@ function getNextPriceHistoryWindow(bounds, targetStartDate, historyEndLimit) {
 
   if (!firstDate) {
     startDate = targetStartDate;
-    endDate = minDateText(historyEndLimit, addDays(startDate, 29));
+    endDate = minDateText(historyEndLimit, addDays(startDate, windowDays - 1));
     return { startDate: startDate, endDate: endDate, reason: 'EMPTY' };
   }
 
   if (lastDate < historyEndLimit) {
     startDate = addDays(lastDate, 1);
-    endDate = minDateText(historyEndLimit, addDays(startDate, 29));
+    endDate = minDateText(historyEndLimit, addDays(startDate, windowDays - 1));
     return { startDate: startDate, endDate: endDate, reason: 'FORWARD' };
   }
 
   missingDate = findMissingHistoryDate(dates, firstDate, historyEndLimit);
   if (missingDate) {
     endDate = minDateText(historyEndLimit, addDays(missingDate, 7));
-    startDate = maxDateText(targetStartDate, addDays(endDate, -29));
+    startDate = maxDateText(targetStartDate, addDays(endDate, -(windowDays - 1)));
     return { startDate: startDate, endDate: endDate, reason: 'GAP' };
   }
 
   if (firstDate > targetStartDate) {
     endDate = addDays(firstDate, -1);
-    startDate = maxDateText(targetStartDate, addDays(endDate, -29));
+    startDate = maxDateText(targetStartDate, addDays(endDate, -(windowDays - 1)));
     return { startDate: startDate, endDate: endDate, reason: 'BACKFILL' };
   }
 
   return { startDate: '', endDate: '', reason: 'UP_TO_DATE' };
+}
+
+function getNextPriceHistorySourceWindow(bounds, sourceRanges) {
+  for (var index = 0; index < sourceRanges.length; index++) {
+    var sourceRange = sourceRanges[index];
+    var windowDays = sourceRange.source == 'JQUANTS'
+      ? 730
+      : sourceRange.source == 'YAHOO_CHART_ARCHIVE'
+        ? 365
+        : 30;
+    var fetchWindow = getNextPriceHistoryWindow(
+      bounds,
+      sourceRange.startDate,
+      sourceRange.endDate,
+      windowDays
+    );
+    if (fetchWindow.startDate && fetchWindow.endDate) {
+      return Object.assign({ source: sourceRange.source }, fetchWindow);
+    }
+  }
+  return { source: '', startDate: '', endDate: '', reason: 'UP_TO_DATE' };
 }
 
 function upsertPriceHistoryRows(db, rows, callback) {
@@ -2169,32 +2482,56 @@ function refreshAssetPriceHistory(db, asset, callback) {
     }
 
     var today = todayText();
-    var historyEndLimit = getHistoryEndLimitDate(asset, today);
-    var targetStartDate = isValidDateText(asset.priceHistoryStartDate) ? asset.priceHistoryStartDate : addDays(today, -30);
-    var fetchWindow = getNextPriceHistoryWindow(bounds, targetStartDate, historyEndLimit);
+    var targetStartDate = getPriceHistoryTargetStartDate(asset.priceHistoryStartDate, today);
+    var sourceRanges = getUncoveredPriceHistorySourceRanges(
+      asset,
+      getPriceHistorySourceRanges(asset, today, targetStartDate)
+    );
+    var fetchWindow = getNextPriceHistorySourceWindow(bounds, sourceRanges);
+    var historySource = fetchWindow.source;
     var startDate = fetchWindow.startDate;
     var endDate = fetchWindow.endDate;
 
-    if (startDate > endDate) {
+    if (!startDate || !endDate || startDate > endDate) {
       updateAssetPriceHistoryStatus(db, asset, {
         priceHistoryFetchedAt: new Date(),
         priceHistoryFetchStatus: 'UP_TO_DATE',
-        priceHistoryFetchError: ''
+        priceHistoryFetchError: '',
+        priceHistoryFetchSource: ''
       }, function (statusErr) {
-        callback(statusErr, { ok: !statusErr, symbol: asset.symbol, skipped: true, reason: 'UP_TO_DATE' });
+        callback(statusErr, {
+          ok: !statusErr,
+          symbol: asset.symbol,
+          skipped: true,
+          reason: 'UP_TO_DATE',
+          historySource: ''
+        });
       });
       return;
     }
 
-    var historyFetcher = isGold ? fetchGoldDailyPriceHistory : isFund ? fetchYahooFundPriceHistory : fetchYahooChartDailyPriceHistory;
+    var historyFetcher = historySource == 'JQUANTS'
+      ? fetchJQuantsDailyPriceHistory
+      : isGold
+        ? fetchGoldDailyPriceHistory
+        : isFund
+          ? fetchYahooFundPriceHistory
+          : fetchYahooChartDailyPriceHistory;
     historyFetcher(asset, startDate, endDate, function (fetchErr, rows) {
       if (fetchErr) {
         updateAssetPriceHistoryStatus(db, asset, {
           priceHistoryFetchedAt: new Date(),
           priceHistoryFetchStatus: fetchErr.message == 'HTTP 429' ? 'RATE_LIMITED' : 'ERROR',
-          priceHistoryFetchError: fetchErr.message
+          priceHistoryFetchError: fetchErr.message,
+          priceHistoryFetchSource: historySource
         }, function (statusErr) {
-          callback(statusErr, { ok: false, symbol: asset.symbol, error: fetchErr.message, stop: fetchErr.message == 'HTTP 429' });
+          callback(statusErr, {
+            ok: false,
+            symbol: asset.symbol,
+            error: fetchErr.message,
+            stop: fetchErr.message == 'HTTP 429',
+            historySource: historySource
+          });
         });
         return;
       }
@@ -2211,15 +2548,25 @@ function refreshAssetPriceHistory(db, asset, callback) {
           return;
         }
 
-        updateAssetPriceHistoryStatus(db, asset, {
+        var historyStatusFields = {
           priceHistoryFetchedAt: new Date(),
-          priceHistoryFetchStatus: 'OK',
+          priceHistoryFetchStatus: rows.length ? 'OK' : 'NO_DATA',
           priceHistoryFetchError: '',
-          priceHistoryLatestDate: rows[rows.length - 1].priceDate
-        }, function (statusErr) {
+          priceHistoryFetchSource: historySource,
+          priceHistoryLatestDate: rows.length
+            ? maxDateText(bounds.lastDate, rows[rows.length - 1].priceDate)
+            : bounds.lastDate
+        };
+        if (historySource == 'JQUANTS') {
+          historyStatusFields.priceHistoryJQuantsStartDate = startDate;
+          historyStatusFields.priceHistoryJQuantsEndDate = endDate;
+        }
+
+        updateAssetPriceHistoryStatus(db, asset, historyStatusFields, function (statusErr) {
           callback(statusErr, {
             ok: !statusErr,
             symbol: asset.symbol,
+            historySource: historySource,
             historyRows: result.total,
             historyInserted: result.inserted,
             historyUpdated: result.updated
@@ -2396,10 +2743,13 @@ function parseFundPriceFromHtml(html, sourceUrl) {
 }
 
 module.exports = {
+  appVersion: APP_VERSION,
   signJwt: signJwt,
   verifyJwt: verifyJwt,
   normalizeNextPath: normalizeNextPath,
   normalizeAssetType: normalizeAssetType,
+  normalizeFundAssetName: normalizeFundAssetName,
+  normalizeAssetName: normalizeAssetName,
   makeSymbol: makeSymbol,
   parseSbiMmfPrice: parseSbiMmfPrice,
   parseSbiDistributionCsv: parseSbiDistributionCsv,
@@ -2416,13 +2766,19 @@ module.exports = {
   findRemainingLotStartDatesBySymbol: findRemainingLotStartDatesBySymbol,
   isPriceHistoryBoundsRow: isPriceHistoryBoundsRow,
   getHistoryEndLimitDate: getHistoryEndLimitDate,
+  getPriceHistoryTargetStartDate: getPriceHistoryTargetStartDate,
+  getPriceHistorySourceRanges: getPriceHistorySourceRanges,
+  isPriceHistorySourceRangeCovered: isPriceHistorySourceRangeCovered,
+  getUncoveredPriceHistorySourceRanges: getUncoveredPriceHistorySourceRanges,
   getNextPriceHistoryWindow: getNextPriceHistoryWindow,
+  getNextPriceHistorySourceWindow: getNextPriceHistorySourceWindow,
   upsertPriceHistoryRows: upsertPriceHistoryRows,
   makeLatestPriceHistoryRow: makeLatestPriceHistoryRow,
   makeFundPriceHistoryRow: makeFundPriceHistoryRow,
   parseYahooFundPriceHistory: parseYahooFundPriceHistory,
   parseYahooChartDailyRates: parseYahooChartDailyRates,
   parseYahooChartDailyPriceHistory: parseYahooChartDailyPriceHistory,
+  parseJQuantsDailyPriceHistory: parseJQuantsDailyPriceHistory,
   parseFundPriceFromHtml: parseFundPriceFromHtml,
   parseStockPriceFromHtml: parseStockPriceFromHtml
 };
@@ -2731,12 +3087,16 @@ function startPriceRefreshJob() {
                 }
               });
               var historyStartDatesBySymbol = findOldestBuyDatesBySymbol(docs);
+              var historyToday = todayText();
 
               var assets = Object.keys(assetsBySymbol)
                 .filter(function (symbol) { return activeSymbols[symbol]; })
                 .map(function (symbol) {
                   return Object.assign({}, assetsBySymbol[symbol], {
-                    priceHistoryStartDate: historyStartDatesBySymbol[symbol] || ''
+                    priceHistoryStartDate: getPriceHistoryTargetStartDate(
+                      historyStartDatesBySymbol[symbol],
+                      historyToday
+                    )
                   });
                 });
 

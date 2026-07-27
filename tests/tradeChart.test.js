@@ -1,4 +1,8 @@
 var assert = require('assert');
+var ejs = require('ejs');
+var fs = require('fs');
+var path = require('path');
+var vm = require('vm');
 var tradeChart = require('../lib/tradeChart');
 var buildTradeChartData = tradeChart.buildTradeChartData;
 var attachPriceHistoryToTradeChartData = tradeChart.attachPriceHistoryToTradeChartData;
@@ -209,11 +213,33 @@ assert.strictEqual(stock.historyLastDate, '2026-06-12');
 assert.strictEqual(stock.priceHistory[0].close, 12050);
 assert.strictEqual(stock.priceHistory[0].low, null);
 assert.strictEqual(stock.priceHistory[1].high, 12300);
+assert.strictEqual(stock.technicalIndicators.status, 'PARTIAL');
+assert.strictEqual(stock.technicalIndicatorSeries.length, 2);
+assert.strictEqual(stock.technicalIndicatorSeries[1].sma20, null);
 
 fund = findAsset(assets, 'FUND:TOPIX');
 assert.strictEqual(fund.historyCount, 1);
 assert.strictEqual(fund.priceHistory[0].date, '2026-06-14');
 assert.strictEqual(fund.priceHistory[0].source, 'YAHOO_FUND_HISTORY');
 assert.strictEqual(fund.priceHistory[0].close, 92000);
+assert.strictEqual(fund.technicalIndicators.status, 'PARTIAL');
+
+var viewPath = path.join(__dirname, '..', 'views', 'trade-chart.ejs');
+var html = ejs.render(fs.readFileSync(viewPath, 'utf8'), {
+  assets: assets,
+  chartDataJson: JSON.stringify(assets),
+  appVersion: require('../package.json').version
+}, { filename: viewPath });
+assert.ok(html.indexOf('v' + require('../package.json').version) >= 0);
+assert.ok(html.indexOf('Technical indicators') >= 0);
+assert.ok(html.indexOf('showSma200') >= 0);
+assert.ok(html.indexOf('id="rsiChart"') >= 0);
+assert.ok(html.indexOf('id="macdChart"') >= 0);
+assert.ok(html.indexOf("var rows = (asset.points || []).slice().reverse();") >= 0);
+var scripts = html.match(/<script[^>]*>[\s\S]*?<\/script>/g) || [];
+scripts.forEach(function (script, index) {
+  var source = script.replace(/^<script[^>]*>/, '').replace(/<\/script>$/, '');
+  new vm.Script(source, { filename: 'trade-chart-inline-' + index + '.js' });
+});
 
 console.log('tradeChart tests passed');

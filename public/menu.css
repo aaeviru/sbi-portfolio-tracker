@@ -44,3 +44,10 @@ li .logout-button:hover {
 .active {
   background-color: #4CAF50;
 }
+
+li.app-version {
+  float: right;
+  padding: 15px 16px;
+  color: #c9c9c9;
+  font-size: 12px;
+}

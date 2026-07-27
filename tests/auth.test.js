@@ -1,6 +1,8 @@
 var assert = require('assert');
 var app = require('../app');
 
+assert.strictEqual(app.appVersion, require('../package.json').version);
+
 var now = Math.floor(Date.now() / 1000);
 var token = app.signJwt({ sub: 'tester', exp: now + 60 }, 'secret');
 var payload = app.verifyJwt(token, 'secret');
