@@ -154,6 +154,49 @@ assert.strictEqual(mmf.priceFetchStatus, 'IMPORTED_MMF_PRICE');
 assert.strictEqual(mmf.marketValue, 99998);
 assert.strictEqual(mmf.unrealizedPl, 0);
 
+var mixedCurrencyMmfRows = buildPortfolioSummary([
+  {
+    tradeDate: '2026-07-07',
+    tradeDateTime: '2026-07-07T09:00:00',
+    assetType: 'FUND',
+    assetSubType: 'MMF',
+    symbol: 'FUND:USDMMF',
+    assetName: 'USD MMF',
+    side: 'BUY',
+    quantity: 61682,
+    unitPrice: 1.62118608,
+    settlementAmount: 99998,
+    settlementCurrency: 'JPY',
+    mmfUsdUnitPrice: 0.01,
+    mmfFxRate: 162.12
+  },
+  {
+    tradeDate: '2026-07-31',
+    tradeDateTime: '2026-07-31T09:00:00',
+    assetType: 'FUND',
+    assetSubType: 'MMF',
+    symbol: 'FUND:USDMMF',
+    assetName: 'USD MMF',
+    side: 'BUY',
+    quantity: 100000,
+    unitPrice: 0.01,
+    settlementAmount: 1000,
+    settlementCurrency: 'USD'
+  }
+], {
+  'FUND:USDMMF': {
+    latestFxRate: 156.765,
+    latestFxRatePair: 'USDJPY',
+    latestFxRateDate: '2026-08-03'
+  }
+});
+var mixedCurrencyMmf = find(mixedCurrencyMmfRows, 'FUND:USDMMF');
+assert.strictEqual(mixedCurrencyMmf.buyAmount, 256763);
+assert.strictEqual(mixedCurrencyMmf.latestPrice, 1.56765);
+assert.strictEqual(mixedCurrencyMmf.latestPriceCurrency, 'JPY');
+assert.strictEqual(mixedCurrencyMmf.marketValue, 253460.79);
+assert.strictEqual(mixedCurrencyMmf.unrealizedPl, -3302.21);
+
 var pricedRows = buildPortfolioSummary([
   {
     tradeDateTime: '2025-01-01T09:00:00',

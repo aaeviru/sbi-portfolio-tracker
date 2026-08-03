@@ -2103,18 +2103,18 @@ function getPriceHistorySourceRanges(asset, today, targetStartDate) {
     var yahooStartDate = nextWeekdayOnOrAfter(addDays(jquantsCutoffDate, 1));
     var ranges = [];
 
-    if (maxDateText(targetStartDate, jquantsStartLimit) <= jquantsEndDate) {
-      ranges.push({
-        source: 'JQUANTS',
-        startDate: maxDateText(targetStartDate, jquantsStartLimit),
-        endDate: minDateText(historyEndLimit, jquantsEndDate)
-      });
-    }
     if (yahooStartDate <= historyEndLimit) {
       ranges.push({
         source: 'YAHOO_CHART',
         startDate: maxDateText(targetStartDate, yahooStartDate),
         endDate: historyEndLimit
+      });
+    }
+    if (maxDateText(targetStartDate, jquantsStartLimit) <= jquantsEndDate) {
+      ranges.push({
+        source: 'JQUANTS',
+        startDate: maxDateText(targetStartDate, jquantsStartLimit),
+        endDate: minDateText(historyEndLimit, jquantsEndDate)
       });
     }
     if (targetStartDate < jquantsStartLimit) {
@@ -2183,6 +2183,13 @@ function getUncoveredPriceHistorySourceRanges(asset, sourceRanges) {
   });
 }
 
+function getMergedJQuantsCoverage(asset, startDate, endDate) {
+  return {
+    startDate: minDateText(asset && asset.priceHistoryJQuantsStartDate, startDate),
+    endDate: maxDateText(asset && asset.priceHistoryJQuantsEndDate, endDate)
+  };
+}
+
 function findMissingHistoryDate(dates, startDate, endDate) {
   var sortedDates = dates.filter(function (date) {
     return date >= startDate && date <= endDate;
@@ -2243,11 +2250,7 @@ function getNextPriceHistoryWindow(bounds, targetStartDate, historyEndLimit, win
 function getNextPriceHistorySourceWindow(bounds, sourceRanges) {
   for (var index = 0; index < sourceRanges.length; index++) {
     var sourceRange = sourceRanges[index];
-    var windowDays = sourceRange.source == 'JQUANTS'
-      ? 730
-      : sourceRange.source == 'YAHOO_CHART_ARCHIVE'
-        ? 365
-        : 30;
+    var windowDays = sourceRange.source == 'YAHOO_CHART_ARCHIVE' ? 365 : 730;
     var fetchWindow = getNextPriceHistoryWindow(
       bounds,
       sourceRange.startDate,
@@ -2420,34 +2423,46 @@ function fetchYahooFundPriceHistory(asset, startDate, endDate, callback) {
       return;
     }
 
-    var path = '/bff-pc/v1/main/fund/price/history/' + encodeURIComponent(fundCode) +
-      '?fromDate=' + formatYahooBffDate(startDate) +
-      '&toDate=' + formatYahooBffDate(endDate) +
-      '&timeFrame=daily&page=1&size=100&displayedMaxPage=5';
-    var url = 'https://finance.yahoo.co.jp' + path;
+    var rows = [];
 
-    fetchTextWithHeaders(url, {
-      'User-Agent': 'Mozilla/5.0 iriyano-price-fetcher',
-      'Accept': 'application/json',
-      'Referer': 'https://finance.yahoo.co.jp/quote/' + encodeURIComponent(fundCode) + '/chart',
-      'jwt-token': token
-    }, function (fetchErr, data) {
-      if (fetchErr) {
-        callback(fetchErr);
-        return;
-      }
+    function fetchPage(page) {
+      var path = '/bff-pc/v1/main/fund/price/history/' + encodeURIComponent(fundCode) +
+        '?fromDate=' + formatYahooBffDate(startDate) +
+        '&toDate=' + formatYahooBffDate(endDate) +
+        '&timeFrame=daily&page=' + page + '&size=100&displayedMaxPage=5';
+      var url = 'https://finance.yahoo.co.jp' + path;
 
-      try {
-        var rows = parseYahooFundPriceHistory(JSON.parse(data), asset);
-        if (rows.length === 0) {
-          callback(new Error('Fund price history not found'));
+      fetchTextWithHeaders(url, {
+        'User-Agent': 'Mozilla/5.0 iriyano-price-fetcher',
+        'Accept': 'application/json',
+        'Referer': 'https://finance.yahoo.co.jp/quote/' + encodeURIComponent(fundCode) + '/chart',
+        'jwt-token': token
+      }, function (fetchErr, data) {
+        if (fetchErr) {
+          callback(fetchErr);
           return;
         }
-        callback(null, rows);
-      } catch (parseErr) {
-        callback(parseErr);
-      }
-    });
+
+        try {
+          var json = JSON.parse(data);
+          rows = rows.concat(parseYahooFundPriceHistory(json, asset));
+          if (json.paging && json.paging.hasNext && page < Number(json.paging.totalPage || page + 1)) {
+            fetchPage(page + 1);
+            return;
+          }
+          if (rows.length === 0) {
+            callback(new Error('Fund price history not found'));
+            return;
+          }
+          rows.sort(function (a, b) { return a.priceDate.localeCompare(b.priceDate); });
+          callback(null, rows);
+        } catch (parseErr) {
+          callback(parseErr);
+        }
+      });
+    }
+
+    fetchPage(1);
   });
 }
 
@@ -2558,8 +2573,9 @@ function refreshAssetPriceHistory(db, asset, callback) {
             : bounds.lastDate
         };
         if (historySource == 'JQUANTS') {
-          historyStatusFields.priceHistoryJQuantsStartDate = startDate;
-          historyStatusFields.priceHistoryJQuantsEndDate = endDate;
+          var jquantsCoverage = getMergedJQuantsCoverage(asset, startDate, endDate);
+          historyStatusFields.priceHistoryJQuantsStartDate = jquantsCoverage.startDate;
+          historyStatusFields.priceHistoryJQuantsEndDate = jquantsCoverage.endDate;
         }
 
         updateAssetPriceHistoryStatus(db, asset, historyStatusFields, function (statusErr) {
@@ -2770,6 +2786,7 @@ module.exports = {
   getPriceHistorySourceRanges: getPriceHistorySourceRanges,
   isPriceHistorySourceRangeCovered: isPriceHistorySourceRangeCovered,
   getUncoveredPriceHistorySourceRanges: getUncoveredPriceHistorySourceRanges,
+  getMergedJQuantsCoverage: getMergedJQuantsCoverage,
   getNextPriceHistoryWindow: getNextPriceHistoryWindow,
   getNextPriceHistorySourceWindow: getNextPriceHistorySourceWindow,
   upsertPriceHistoryRows: upsertPriceHistoryRows,
@@ -2779,6 +2796,9 @@ module.exports = {
   parseYahooChartDailyRates: parseYahooChartDailyRates,
   parseYahooChartDailyPriceHistory: parseYahooChartDailyPriceHistory,
   parseJQuantsDailyPriceHistory: parseJQuantsDailyPriceHistory,
+  fetchYahooChartDailyPriceHistory: fetchYahooChartDailyPriceHistory,
+  fetchYahooFundPriceHistory: fetchYahooFundPriceHistory,
+  fetchGoldDailyPriceHistory: fetchGoldDailyPriceHistory,
   parseFundPriceFromHtml: parseFundPriceFromHtml,
   parseStockPriceFromHtml: parseStockPriceFromHtml
 };
@@ -2857,12 +2877,18 @@ function refreshAssetPrice(db, asset, options, callback) {
   options = options || {};
 
   if (asset.assetSubType == 'MMF') {
+    var mmfUpdate = {
+      latestPriceFetchedAt: new Date(),
+      priceFetchStatus: 'IMPORTED_MMF_PRICE',
+      priceFetchError: ''
+    };
+    if (options.usdJpyRate && isFinite(options.usdJpyRate.rate)) {
+      mmfUpdate.latestFxRate = options.usdJpyRate.rate;
+      mmfUpdate.latestFxRatePair = options.usdJpyRate.pair;
+      mmfUpdate.latestFxRateDate = options.usdJpyRate.rateDate;
+    }
     db.collection('assets').updateOne({ symbol: asset.symbol }, {
-      $set: {
-        latestPriceFetchedAt: new Date(),
-        priceFetchStatus: 'IMPORTED_MMF_PRICE',
-        priceFetchError: ''
-      }
+      $set: mmfUpdate
     }, function (updateErr) {
       callback(updateErr, { ok: !updateErr, symbol: asset.symbol, skipped: true, reason: 'IMPORTED_MMF_PRICE' });
     });
@@ -2942,8 +2968,8 @@ function refreshAssetPrices(db, assets, callback) {
     return;
   }
 
-  var hasUsStock = assets.some(function (asset) {
-    return asset.assetType == 'US_STOCK';
+  var hasUsdPricedAsset = assets.some(function (asset) {
+    return asset.assetType == 'US_STOCK' || asset.assetSubType == 'MMF';
   });
 
   function refreshAll(usdJpyRate) {
@@ -2990,7 +3016,7 @@ function refreshAssetPrices(db, assets, callback) {
     next();
   }
 
-  if (hasUsStock) {
+  if (hasUsdPricedAsset) {
     getLatestFxRate(db, 'USDJPY', function (rateErr, usdJpyRate) {
       if (rateErr) {
         callback(rateErr);

@@ -23,6 +23,7 @@ var getPriceHistoryTargetStartDate = priceParsers.getPriceHistoryTargetStartDate
 var getPriceHistorySourceRanges = priceParsers.getPriceHistorySourceRanges;
 var isPriceHistorySourceRangeCovered = priceParsers.isPriceHistorySourceRangeCovered;
 var getUncoveredPriceHistorySourceRanges = priceParsers.getUncoveredPriceHistorySourceRanges;
+var getMergedJQuantsCoverage = priceParsers.getMergedJQuantsCoverage;
 var getNextPriceHistoryWindow = priceParsers.getNextPriceHistoryWindow;
 var getNextPriceHistorySourceWindow = priceParsers.getNextPriceHistorySourceWindow;
 var makeLatestPriceHistoryRow = priceParsers.makeLatestPriceHistoryRow;
@@ -115,8 +116,8 @@ assert.strictEqual(getPriceHistoryTargetStartDate('', '2026-06-18'), '2024-06-18
 assert.deepStrictEqual(
   getPriceHistorySourceRanges({ assetType: 'STOCK' }, '2026-06-18', '2026-01-01'),
   [
-    { source: 'JQUANTS', startDate: '2026-01-01', endDate: '2026-03-26' },
-    { source: 'YAHOO_CHART', startDate: '2026-03-27', endDate: '2026-06-17' }
+    { source: 'YAHOO_CHART', startDate: '2026-03-27', endDate: '2026-06-17' },
+    { source: 'JQUANTS', startDate: '2026-01-01', endDate: '2026-03-26' }
   ]
 );
 assert.deepStrictEqual(
@@ -126,8 +127,8 @@ assert.deepStrictEqual(
 assert.deepStrictEqual(
   getPriceHistorySourceRanges({ assetType: 'STOCK' }, '2026-06-18', '2020-01-01'),
   [
-    { source: 'JQUANTS', startDate: '2024-06-18', endDate: '2026-03-26' },
     { source: 'YAHOO_CHART', startDate: '2026-03-27', endDate: '2026-06-17' },
+    { source: 'JQUANTS', startDate: '2024-06-18', endDate: '2026-03-26' },
     { source: 'YAHOO_CHART_ARCHIVE', startDate: '2020-01-01', endDate: '2024-06-17' }
   ]
 );
@@ -193,6 +194,17 @@ assert.deepStrictEqual(
   ]
 );
 assert.deepStrictEqual(
+  getMergedJQuantsCoverage({
+    priceHistoryJQuantsStartDate: '2024-07-29',
+    priceHistoryJQuantsEndDate: '2026-05-08'
+  }, '2026-05-09', '2026-05-11'),
+  { startDate: '2024-07-29', endDate: '2026-05-11' }
+);
+assert.deepStrictEqual(
+  getMergedJQuantsCoverage({}, '2024-07-29', '2026-05-11'),
+  { startDate: '2024-07-29', endDate: '2026-05-11' }
+);
+assert.deepStrictEqual(
   getNextPriceHistoryWindow({ dates: ['2026-06-10', '2026-06-11'] }, '2026-06-01', '2026-06-18'),
   { startDate: '2026-06-12', endDate: '2026-06-18', reason: 'FORWARD' }
 );
@@ -221,6 +233,13 @@ assert.deepStrictEqual(
     ]
   ),
   { source: 'JQUANTS', startDate: '2026-01-01', endDate: '2026-03-26', reason: 'EMPTY' }
+);
+assert.deepStrictEqual(
+  getNextPriceHistorySourceWindow(
+    { dates: [] },
+    [{ source: 'YAHOO_FUND_HISTORY', startDate: '2024-06-01', endDate: '2026-05-31' }]
+  ),
+  { source: 'YAHOO_FUND_HISTORY', startDate: '2024-06-01', endDate: '2026-05-31', reason: 'EMPTY' }
 );
 
 var jquantsRows = parseJQuantsDailyPriceHistory({
