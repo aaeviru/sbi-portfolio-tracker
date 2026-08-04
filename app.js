@@ -16,6 +16,7 @@ var sortTradeChartAssetsBySummaryRows = require('./lib/tradeChart').sortTradeCha
 var withDb = require('./lib/db').withDb;
 var buildDailyReportSnapshot = require('./lib/dailyReport').buildDailyReportSnapshot;
 var dateDomains = require('./lib/dateDomains');
+var historyCoverage = require('./lib/historyCoverage');
 var generateDailyReport = require('./lib/openaiReport').generateDailyReport;
 var buildChatGptReportPrompt = require('./lib/openaiReport').buildChatGptReportPrompt;
 var buildChineseChatGptReportPrompt = require('./lib/openaiReport').buildChineseChatGptReportPrompt;
@@ -33,7 +34,13 @@ var priceRefreshJob = {
   finishedAt: '',
   ok: 0,
   failed: 0,
-  error: ''
+  error: '',
+  totalAssets: 0,
+  processedAssets: 0,
+  currentSymbol: '',
+  historyRequests: 0,
+  pendingSessions: 0,
+  results: []
 };
 app.set('view engine', 'ejs');
 app.locals.appVersion = APP_VERSION;
@@ -1746,10 +1753,6 @@ function fetchYahooChartDailyPriceHistory(asset, startDate, endDate, callback) {
       var rows = parseYahooChartDailyPriceHistory(json, asset).filter(function (row) {
         return row.priceDate >= startDate && row.priceDate <= effectiveEndDate;
       });
-      if (rows.length === 0) {
-        callback(new Error('Daily price history not found'));
-        return;
-      }
       callback(null, rows);
     } catch (parseErr) {
       callback(parseErr);
@@ -1980,10 +1983,6 @@ function fetchGoldDailyPriceHistory(asset, startDate, endDate, callback) {
 
       var rows = buildGoldPriceHistoryRows(goldRows, fxRows, asset);
       rows.fxRows = fxRows;
-      if (rows.length === 0) {
-        callback(new Error('Gold daily price history not found'));
-        return;
-      }
       callback(null, rows);
     });
   });
@@ -2496,10 +2495,6 @@ function fetchYahooFundPriceHistory(asset, startDate, endDate, callback) {
             fetchPage(page + 1);
             return;
           }
-          if (rows.length === 0) {
-            callback(new Error('Fund price history not found'));
-            return;
-          }
           rows.sort(function (a, b) { return a.priceDate.localeCompare(b.priceDate); });
           callback(null, rows);
         } catch (parseErr) {
@@ -2516,7 +2511,100 @@ function updateAssetPriceHistoryStatus(db, asset, fields, callback) {
   db.collection('assets').updateOne({ symbol: asset.symbol }, { $set: fields }, callback);
 }
 
-function refreshAssetPriceHistory(db, asset, callback) {
+function findAssetPriceHistoryState(db, asset, callback) {
+  db.collection('priceHistory').find({ symbol: asset.symbol }).toArray(function (historyErr, rows) {
+    if (historyErr) {
+      callback(historyErr);
+      return;
+    }
+    db.collection('priceHistoryCoverage').find({ symbol: asset.symbol }).toArray(function (coverageErr, intervals) {
+      callback(coverageErr, {
+        rows: rows || [],
+        intervals: intervals || []
+      });
+    });
+  });
+}
+
+function saveCoverageForSource(db, asset, source, intervals, callback) {
+  var collection = db.collection('priceHistoryCoverage');
+  collection.deleteMany({ symbol: asset.symbol, source: source }, function (deleteErr) {
+    if (deleteErr) {
+      callback(deleteErr);
+      return;
+    }
+    var updates = (intervals || []).map(function (interval) {
+      return {
+        updateOne: {
+          filter: { coverageKey: interval.coverageKey },
+          update: { $set: interval },
+          upsert: true
+        }
+      };
+    });
+    collection.bulkWrite(updates, { ordered: true }, callback);
+  });
+}
+
+function bootstrapAssetPriceHistoryCoverage(db, asset, sourceRanges, state, callback) {
+  if (Number(asset.priceHistoryCoverageVersion || 0) >= 1) {
+    callback(null, state);
+    return;
+  }
+
+  var index = 0;
+  function next(err) {
+    if (err) {
+      callback(err);
+      return;
+    }
+    if (index >= sourceRanges.length) {
+      updateAssetPriceHistoryStatus(db, asset, { priceHistoryCoverageVersion: 1 }, function (updateErr) {
+        if (!updateErr) {
+          asset.priceHistoryCoverageVersion = 1;
+        }
+        callback(updateErr, state);
+      });
+      return;
+    }
+
+    var range = sourceRanges[index++];
+    var sourceIntervals = state.intervals.filter(function (interval) { return interval.source == range.source; });
+    var rowsInRange = state.rows.filter(function (row) {
+      return row.priceDate >= range.startDate && row.priceDate <= range.endDate;
+    });
+    var bootstrapped = historyCoverage.buildCompleteIntervalsFromRows(asset, range.source, rowsInRange);
+    var normalized = historyCoverage.normalizeIntervals(asset, range.source, sourceIntervals.concat(bootstrapped));
+    saveCoverageForSource(db, asset, range.source, normalized, function (saveErr) {
+      if (!saveErr) {
+        state.intervals = state.intervals.filter(function (interval) { return interval.source != range.source; }).concat(normalized);
+      }
+      next(saveErr);
+    });
+  }
+  next();
+}
+
+function getHistoryFetcher(asset, historySource) {
+  if (historySource == 'JQUANTS') {
+    return fetchJQuantsDailyPriceHistory;
+  }
+  if (asset.assetType == 'GOLD') {
+    return fetchGoldDailyPriceHistory;
+  }
+  if (asset.assetType == 'FUND') {
+    return fetchYahooFundPriceHistory;
+  }
+  return fetchYahooChartDailyPriceHistory;
+}
+
+function refreshAssetPriceHistory(db, asset, options, callback) {
+  if (typeof options == 'function') {
+    callback = options;
+    options = {};
+  }
+  options = options || {};
+
   if (asset.assetSubType == 'MMF') {
     updateAssetPriceHistoryStatus(db, asset, {
       priceHistoryFetchedAt: new Date(),
@@ -2536,109 +2624,141 @@ function refreshAssetPriceHistory(db, asset, callback) {
     return;
   }
 
-  findPriceHistoryBounds(db, asset.symbol, asset, function (findErr, bounds) {
-    if (findErr) {
-      callback(findErr);
+  var now = new Date();
+  var reportDate = getReportDate(now);
+  var historyEndLimit = getHistoryEndLimitDate(asset, now);
+  var targetStartDate = getPriceHistoryTargetStartDate(asset.priceHistoryStartDate, reportDate);
+  var sourceRanges = getPriceHistorySourceRanges(asset, reportDate, targetStartDate, historyEndLimit);
+  var budget = options.budget || {
+    remaining: Number(process.env.PRICE_HISTORY_MAX_REQUESTS || 40),
+    deadline: Date.now() + Number(process.env.PRICE_HISTORY_MAX_DURATION_MS || 10 * 60 * 1000)
+  };
+  var requestCount = 0;
+  var inserted = 0;
+  var updated = 0;
+
+  findAssetPriceHistoryState(db, asset, function (stateErr, state) {
+    if (stateErr) {
+      callback(stateErr);
       return;
     }
+    bootstrapAssetPriceHistoryCoverage(db, asset, sourceRanges, state, function (bootstrapErr) {
+      if (bootstrapErr) {
+        callback(bootstrapErr);
+        return;
+      }
+      nextWindow();
+    });
 
-    var now = new Date();
-    var reportDate = getReportDate(now);
-    var historyEndLimit = getHistoryEndLimitDate(asset, now);
-    var targetStartDate = getPriceHistoryTargetStartDate(asset.priceHistoryStartDate, reportDate);
-    var sourceRanges = getUncoveredPriceHistorySourceRanges(
-      asset,
-      getPriceHistorySourceRanges(asset, reportDate, targetStartDate, historyEndLimit)
-    );
-    var fetchWindow = getNextPriceHistorySourceWindow(bounds, sourceRanges);
-    var historySource = fetchWindow.source;
-    var startDate = fetchWindow.startDate;
-    var endDate = fetchWindow.endDate;
-
-    if (!startDate || !endDate || startDate > endDate) {
+    function finish(status, error, pendingCount, deferredCount, stop) {
+      var completedDates = state.rows.filter(function (row) {
+        return isPriceHistoryBoundsRow(row, asset);
+      }).map(function (row) { return row.priceDate; }).sort();
       updateAssetPriceHistoryStatus(db, asset, {
         priceHistoryFetchedAt: new Date(),
-        priceHistoryFetchStatus: 'UP_TO_DATE',
-        priceHistoryFetchError: '',
-        priceHistoryFetchSource: ''
+        priceHistoryFetchStatus: status,
+        priceHistoryFetchError: error || '',
+        priceHistoryLatestDate: completedDates[completedDates.length - 1] || '',
+        priceHistoryPendingSessions: Number(pendingCount || 0) + Number(deferredCount || 0)
       }, function (statusErr) {
         callback(statusErr, {
-          ok: !statusErr,
+          ok: !statusErr && status != 'ERROR' && status != 'RATE_LIMITED',
           symbol: asset.symbol,
-          skipped: true,
-          reason: 'UP_TO_DATE',
-          historySource: ''
+          skipped: requestCount === 0 && status == 'UP_TO_DATE',
+          reason: status,
+          error: error || '',
+          stop: !!stop,
+          historyRequests: requestCount,
+          historyRows: inserted + updated,
+          historyInserted: inserted,
+          historyUpdated: updated,
+          pendingSessions: Number(pendingCount || 0) + Number(deferredCount || 0)
         });
       });
-      return;
     }
 
-    var historyFetcher = historySource == 'JQUANTS'
-      ? fetchJQuantsDailyPriceHistory
-      : isGold
-        ? fetchGoldDailyPriceHistory
-        : isFund
-          ? fetchYahooFundPriceHistory
-          : fetchYahooChartDailyPriceHistory;
-    historyFetcher(asset, startDate, endDate, function (fetchErr, rows) {
-      if (fetchErr) {
-        updateAssetPriceHistoryStatus(db, asset, {
-          priceHistoryFetchedAt: new Date(),
-          priceHistoryFetchStatus: fetchErr.message == 'HTTP 429' ? 'RATE_LIMITED' : 'ERROR',
-          priceHistoryFetchError: fetchErr.message,
-          priceHistoryFetchSource: historySource
-        }, function (statusErr) {
-          callback(statusErr, {
-            ok: false,
-            symbol: asset.symbol,
-            error: fetchErr.message,
-            stop: fetchErr.message == 'HTTP 429',
-            historySource: historySource
-          });
-        });
+    function nextWindow() {
+      var windows = historyCoverage.buildPendingWindows({
+        asset: asset,
+        sourceRanges: sourceRanges,
+        rows: state.rows,
+        intervals: state.intervals,
+        nowText: budget.forceRetry ? '9999-12-31T23:59:59.999Z' : new Date().toISOString()
+      });
+      var deferredCount = Number(windows.deferredCount || 0);
+
+      if (!windows.length) {
+        finish(deferredCount ? 'RETRY_SCHEDULED' : 'UP_TO_DATE', '', 0, deferredCount, false);
+        return;
+      }
+      if (budget.remaining <= 0 || Date.now() >= budget.deadline) {
+        var pendingCount = windows.reduce(function (sum, window) { return sum + window.expectedCount; }, 0);
+        finish('PARTIAL', '', pendingCount, deferredCount, false);
         return;
       }
 
-      upsertFetchedFxRows(db, rows.fxRows, function (fxUpsertErr) {
-        if (fxUpsertErr) {
-          callback(fxUpsertErr);
+      var window = windows[0];
+      var historyFetcher = getHistoryFetcher(asset, window.source);
+      budget.remaining--;
+      budget.requests = Number(budget.requests || 0) + 1;
+      requestCount++;
+
+      historyFetcher(asset, window.startDate, window.endDate, function (fetchErr, rows) {
+        rows = rows || [];
+        var rateLimited = !!(fetchErr && fetchErr.message == 'HTTP 429');
+
+        function saveAttempt(result) {
+          var normalized = historyCoverage.classifyAttempt({
+            asset: asset,
+            window: window,
+            rows: fetchErr ? [] : rows,
+            allRows: state.rows.concat(fetchErr ? [] : rows),
+            intervals: state.intervals,
+            now: new Date(),
+            error: fetchErr ? fetchErr.message : '',
+            rateLimited: rateLimited
+          });
+          saveCoverageForSource(db, asset, window.source, normalized, function (coverageErr) {
+            if (coverageErr) {
+              callback(coverageErr);
+              return;
+            }
+            state.intervals = state.intervals.filter(function (interval) { return interval.source != window.source; }).concat(normalized);
+            if (fetchErr) {
+              var hasRetryableFailure = normalized.some(function (interval) { return interval.status == 'FAILED'; });
+              if (!hasRetryableFailure) {
+                finish('UP_TO_DATE', '', 0, 0, false);
+                return;
+              }
+              finish(rateLimited ? 'RATE_LIMITED' : 'ERROR', fetchErr.message, window.expectedCount, 0, rateLimited);
+              return;
+            }
+            inserted += result.inserted;
+            updated += result.updated;
+            state.rows = state.rows.concat(rows);
+            nextWindow();
+          });
+        }
+
+        if (fetchErr) {
+          saveAttempt({ inserted: 0, updated: 0 });
           return;
         }
-
-        upsertPriceHistoryRows(db, rows, function (upsertErr, result) {
-        if (upsertErr) {
-          callback(upsertErr);
-          return;
-        }
-
-        var historyStatusFields = {
-          priceHistoryFetchedAt: new Date(),
-          priceHistoryFetchStatus: rows.length ? 'OK' : 'NO_DATA',
-          priceHistoryFetchError: '',
-          priceHistoryFetchSource: historySource,
-          priceHistoryLatestDate: rows.length
-            ? maxDateText(bounds.lastDate, rows[rows.length - 1].priceDate)
-            : bounds.lastDate
-        };
-        if (historySource == 'JQUANTS') {
-          var jquantsCoverage = getMergedJQuantsCoverage(asset, startDate, endDate);
-          historyStatusFields.priceHistoryJQuantsStartDate = jquantsCoverage.startDate;
-          historyStatusFields.priceHistoryJQuantsEndDate = jquantsCoverage.endDate;
-        }
-
-        updateAssetPriceHistoryStatus(db, asset, historyStatusFields, function (statusErr) {
-          callback(statusErr, {
-            ok: !statusErr,
-            symbol: asset.symbol,
-            historySource: historySource,
-            historyRows: result.total,
-            historyInserted: result.inserted,
-            historyUpdated: result.updated
+        upsertFetchedFxRows(db, rows.fxRows, function (fxUpsertErr) {
+          if (fxUpsertErr) {
+            callback(fxUpsertErr);
+            return;
+          }
+          upsertPriceHistoryRows(db, rows, function (upsertErr, result) {
+            if (upsertErr) {
+              callback(upsertErr);
+              return;
+            }
+            saveAttempt(result);
           });
         });
       });
-      });
-    });
+    }
   });
 }
 
@@ -3066,6 +3186,16 @@ function refreshAssetPrice(db, asset, options, callback) {
 function refreshAssetPrices(db, assets, callback) {
   var results = [];
   var delayMs = 800;
+  var historyBudget = {
+    remaining: Number(process.env.PRICE_HISTORY_MAX_REQUESTS || 40),
+    deadline: Date.now() + Number(process.env.PRICE_HISTORY_MAX_DURATION_MS || 10 * 60 * 1000),
+    requests: 0,
+    forceRetry: !!priceRefreshJob.targetSymbol
+  };
+
+  priceRefreshJob.totalAssets = assets.length;
+  priceRefreshJob.processedAssets = 0;
+  priceRefreshJob.currentSymbol = '';
 
   if (assets.length === 0) {
     callback(null, results);
@@ -3087,6 +3217,7 @@ function refreshAssetPrices(db, assets, callback) {
 
       var asset = assets[index];
       index++;
+      priceRefreshJob.currentSymbol = asset.symbol;
 
       refreshAssetPrice(db, asset, { usdJpyRate: usdJpyRate }, function (err, result) {
         if (err) {
@@ -3100,14 +3231,20 @@ function refreshAssetPrices(db, assets, callback) {
           return;
         }
 
-        refreshAssetPriceHistory(db, asset, function (historyErr, historyResult) {
+        refreshAssetPriceHistory(db, asset, { budget: historyBudget }, function (historyErr, historyResult) {
           if (historyErr) {
             results.push({ ok: false, symbol: asset.symbol, error: historyErr.message });
           } else if (historyResult && !historyResult.skipped) {
             results.push(Object.assign({ type: 'PRICE_HISTORY' }, historyResult));
           }
 
+          priceRefreshJob.processedAssets = index;
+          priceRefreshJob.historyRequests = historyBudget.requests;
+          priceRefreshJob.pendingSessions += Number(historyResult && historyResult.pendingSessions || 0);
+          priceRefreshJob.results = results.slice(-100);
+
           if (historyResult && historyResult.stop) {
+            priceRefreshJob.currentSymbol = '';
             callback(null, results.concat([{ ok: false, symbol: '*', error: 'Rate limited; stopped remaining history refreshes' }]));
             return;
           }
@@ -3140,17 +3277,24 @@ function getPriceRefreshStatus() {
     finishedAt: priceRefreshJob.finishedAt,
     ok: priceRefreshJob.ok,
     failed: priceRefreshJob.failed,
-    error: priceRefreshJob.error
+    error: priceRefreshJob.error,
+    totalAssets: priceRefreshJob.totalAssets,
+    processedAssets: priceRefreshJob.processedAssets,
+    currentSymbol: priceRefreshJob.currentSymbol,
+    historyRequests: priceRefreshJob.historyRequests,
+    pendingSessions: priceRefreshJob.pendingSessions,
+    results: priceRefreshJob.results
   };
 }
 
 function finishPriceRefreshJob(fields) {
   Object.assign(priceRefreshJob, fields, {
-    finishedAt: new Date().toISOString()
+    finishedAt: new Date().toISOString(),
+    currentSymbol: ''
   });
 }
 
-function startPriceRefreshJob() {
+function startPriceRefreshJob(targetSymbol) {
   if (priceRefreshJob.status == 'RUNNING') {
     return false;
   }
@@ -3161,7 +3305,14 @@ function startPriceRefreshJob() {
     finishedAt: '',
     ok: 0,
     failed: 0,
-    error: ''
+    error: '',
+    totalAssets: 0,
+    processedAssets: 0,
+    currentSymbol: '',
+    historyRequests: 0,
+    pendingSessions: 0,
+    results: [],
+    targetSymbol: targetSymbol || ''
   };
 
   setTimeout(function () {
@@ -3221,6 +3372,7 @@ function startPriceRefreshJob() {
 
               var assets = Object.keys(assetsBySymbol)
                 .filter(function (symbol) { return activeSymbols[symbol]; })
+                .filter(function (symbol) { return !targetSymbol || symbol == targetSymbol; })
                 .map(function (symbol) {
                   return Object.assign({}, assetsBySymbol[symbol], {
                     priceHistoryStartDate: getPriceHistoryTargetStartDate(
@@ -3245,8 +3397,14 @@ function startPriceRefreshJob() {
                   return;
                 }
 
-                var ok = results.filter(function (result) { return result.ok; }).length;
-                var failed = results.length - ok;
+                var failedSymbols = {};
+                results.filter(function (result) {
+                  return result && !result.ok && result.symbol && result.symbol != '*';
+                }).forEach(function (result) {
+                  failedSymbols[result.symbol] = true;
+                });
+                var failed = Object.keys(failedSymbols).length;
+                var ok = Math.max(0, assets.length - failed);
                 finishPriceRefreshJob({
                   status: 'COMPLETED',
                   ok: ok,
@@ -3639,6 +3797,113 @@ function getDailyReportDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : getReportDate();
 }
 
+function mapRowsBySymbol(rows) {
+  var mapped = {};
+  (rows || []).forEach(function (row) {
+    if (!mapped[row.symbol]) {
+      mapped[row.symbol] = [];
+    }
+    mapped[row.symbol].push(row);
+  });
+  return mapped;
+}
+
+function buildPriceUpdateRows(summaryRows, assetsBySymbol, historyRows, coverageRows, transactions) {
+  var historyBySymbol = mapRowsBySymbol(historyRows);
+  var coverageBySymbol = mapRowsBySymbol(coverageRows);
+  var activeSymbols = findActiveQuantitySymbols(transactions);
+  var oldestBuyDates = findOldestBuyDatesBySymbol(transactions);
+  var reportDate = getReportDate();
+  var now = new Date();
+
+  summaryRows.forEach(function (row) {
+    if (isFinite(row.netQty) && Math.abs(row.netQty) > 0.0000001) {
+      activeSymbols[row.symbol] = true;
+    }
+  });
+
+  return summaryRows.filter(function (row) {
+    return activeSymbols[row.symbol];
+  }).map(function (row) {
+    var asset = Object.assign({}, assetsBySymbol[row.symbol] || {}, {
+      symbol: row.symbol,
+      name: row.name,
+      code: row.code,
+      assetType: row.assetType,
+      assetSubType: row.assetSubType || '',
+      priceHistoryStartDate: getPriceHistoryTargetStartDate(oldestBuyDates[row.symbol], reportDate)
+    });
+    var rows = historyBySymbol[row.symbol] || [];
+    var intervals = coverageBySymbol[row.symbol] || [];
+    var sourceRanges = asset.assetSubType == 'MMF' ? [] : getPriceHistorySourceRanges(
+      asset,
+      reportDate,
+      asset.priceHistoryStartDate,
+      getHistoryEndLimitDate(asset, now)
+    );
+    var displayIntervals = intervals.slice();
+
+    sourceRanges.forEach(function (range) {
+      var rangeRows = rows.filter(function (historyRow) {
+        return historyRow.priceDate >= range.startDate && historyRow.priceDate <= range.endDate;
+      });
+      var sourceIntervals = displayIntervals.filter(function (interval) { return interval.source == range.source; });
+      var completed = historyCoverage.buildCompleteIntervalsFromRows(asset, range.source, rangeRows);
+      var normalized = historyCoverage.normalizeIntervals(asset, range.source, sourceIntervals.concat(completed));
+      displayIntervals = displayIntervals.filter(function (interval) { return interval.source != range.source; }).concat(normalized);
+    });
+
+    var summary = historyCoverage.summarizeCoverage(
+      asset,
+      sourceRanges,
+      rows,
+      displayIntervals,
+      now.toISOString()
+    );
+    if (asset.assetSubType == 'MMF') {
+      summary.status = asset.priceFetchError ? 'FAILED' : 'UP_TO_DATE';
+      summary.pendingCount = 0;
+      summary.firstCompletedDate = '';
+      summary.lastCompletedDate = '';
+      summary.latestSnapshotDate = asset.latestPriceDate || '';
+    } else if (asset.priceHistoryFetchStatus == 'ERROR' || asset.priceHistoryFetchStatus == 'RATE_LIMITED') {
+      summary.status = 'FAILED';
+    }
+
+    var failedIntervals = displayIntervals.filter(function (interval) { return interval.status == 'FAILED'; });
+    var retryDates = failedIntervals.map(function (interval) { return interval.retryAfter; }).filter(Boolean).sort();
+    var attemptDates = displayIntervals.map(function (interval) { return interval.lastAttemptAt; }).filter(Boolean).sort();
+    return {
+      symbol: row.symbol,
+      code: row.code,
+      name: row.name,
+      assetType: row.assetType,
+      assetSubType: row.assetSubType || '',
+      currentPrice: asset.latestPrice != null ? asset.latestPrice : row.latestPrice,
+      currentPriceDate: asset.latestPriceDate || row.latestPriceDate || '',
+      currentPriceDateBasis: asset.latestPriceDateBasis || row.latestPriceDateBasis || '',
+      currentPriceSourceTimezone: asset.latestPriceSourceTimezone || row.latestPriceSourceTimezone || '',
+      priceStatus: asset.priceFetchStatus || row.priceFetchStatus || '',
+      priceError: asset.priceFetchError || row.priceFetchError || '',
+      historyStatus: asset.priceHistoryFetchStatus || '',
+      historyError: asset.priceHistoryFetchError || '',
+      firstCompletedDate: summary.firstCompletedDate,
+      lastCompletedDate: summary.lastCompletedDate,
+      latestSnapshotDate: summary.latestSnapshotDate,
+      pendingCount: summary.pendingCount,
+      deferredCount: summary.deferredCount,
+      nextRetryAt: retryDates[0] || '',
+      lastAttemptAt: attemptDates[attemptDates.length - 1] || asset.priceHistoryFetchedAt || '',
+      status: summary.status,
+      sources: sourceRanges.map(function (range) { return range.source; }).join(', ') || (asset.assetSubType == 'MMF' ? 'SBI CSV' : ''),
+      intervals: displayIntervals.sort(function (a, b) {
+        return b.startDate.localeCompare(a.startDate) || a.source.localeCompare(b.source);
+      }),
+      pendingWindows: summary.pendingWindows
+    };
+  });
+}
+
 function findLatestDailyReport(db, callback) {
   db.collection('dailyReports').find().sort({ reportDate: -1 }).limit(1).toArray(function (err, docs) {
     if (err) {
@@ -3760,6 +4025,70 @@ app.post('/daily-report/generate', function (req, res) {
     });
   });
 });
+app.get('/prices', function (req, res) {
+  withDb(function (err, db, close) {
+    if (err) {
+      res.status(500).send(err.message);
+      return;
+    }
+    findAllTransactions(db, function (findErr, transactionDocs) {
+      if (findErr) {
+        close();
+        res.status(500).send(findErr.message);
+        return;
+      }
+      findGoldHolding(db, function (goldErr, goldHolding) {
+        if (goldErr) {
+          close();
+          res.status(500).send(goldErr.message);
+          return;
+        }
+        var docs = addGoldTransaction(transactionDocs, goldHolding);
+        var summaryRows = buildPortfolioSummary(docs);
+        syncAssetsFromSummary(db, summaryRows, function (syncErr) {
+          if (syncErr) {
+            close();
+            res.status(500).send(syncErr.message);
+            return;
+          }
+          var symbols = summaryRows.map(function (row) { return row.symbol; });
+          findAssetsBySymbols(db, symbols, function (assetErr, assetsBySymbol) {
+            if (assetErr) {
+              close();
+              res.status(500).send(assetErr.message);
+              return;
+            }
+            db.collection('priceHistory').find({ symbol: { $in: symbols } }).toArray(function (historyErr, historyRows) {
+              if (historyErr) {
+                close();
+                res.status(500).send(historyErr.message);
+                return;
+              }
+              db.collection('priceHistoryCoverage').find({ symbol: { $in: symbols } }).toArray(function (coverageErr, coverageRows) {
+                close();
+                if (coverageErr) {
+                  res.status(500).send(coverageErr.message);
+                  return;
+                }
+                res.render('prices.ejs', {
+                  rows: buildPriceUpdateRows(summaryRows, assetsBySymbol, historyRows, coverageRows, docs),
+                  reportDate: getReportDate(),
+                  refreshStatus: getPriceRefreshStatus(),
+                  message: req.query.message || ''
+                });
+              });
+            });
+          });
+        });
+      });
+    });
+  });
+});
+
+app.get('/prices/status', function (req, res) {
+  res.json(getPriceRefreshStatus());
+});
+
 app.get('/summary', function (req, res) {
   withDb(function (err, db, close) {
     if (err) {
@@ -4030,13 +4359,21 @@ app.post('/assets/mapping', function (req, res) {
 });
 
 app.get('/prices/refresh', function (req, res) {
-  res.redirect('/summary?message=' + encodeURIComponent('Use the Update Prices button to start price refresh.'));
+  res.redirect('/prices?message=' + encodeURIComponent('Use Update All to start a price refresh.'));
 });
 
 app.post('/prices/refresh', function (req, res) {
   var started = startPriceRefreshJob();
-  res.redirect('/summary?message=' + encodeURIComponent(started
-    ? 'Price refresh started. This page will stay available while it runs.'
+  res.redirect('/prices?message=' + encodeURIComponent(started
+    ? 'Price refresh started.'
+    : 'Price refresh is already running.'));
+});
+
+app.post('/prices/:symbol/refresh', function (req, res) {
+  var symbol = cleanCsvValue(req.params.symbol);
+  var started = startPriceRefreshJob(symbol);
+  res.redirect('/prices?message=' + encodeURIComponent(started
+    ? 'Price refresh started for ' + symbol + '.'
     : 'Price refresh is already running.'));
 });
 

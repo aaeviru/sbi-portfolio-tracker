@@ -79,6 +79,15 @@
       margin: 12px 0;
     }
 
+    .price-update-link {
+      display: inline-block;
+      padding: 7px 10px;
+      border: 1px solid #2f6f91;
+      color: #17445d;
+      background: #f6fbfd;
+      text-decoration: none;
+    }
+
     .message {
       padding: 8px 10px;
       border: 1px solid #b7c7d0;
@@ -163,18 +172,16 @@
     <h1>Portfolio Summary</h1>
     <p>Report date (JST): <strong><%= reportDate %></strong></p>
     <div class="toolbar">
-      <form action="/prices/refresh" method="post">
-        <button type="submit" formmethod="post" formaction="/prices/refresh">Update Prices</button>
-      </form>
+      <a class="price-update-link" href="/prices">Price Update</a>
       <% if (message) { %>
         <span class="message"><%= message %></span>
       <% } %>
       <% if (refreshStatus && refreshStatus.status == 'RUNNING') { %>
-        <span class="message">Price refresh running since <%= refreshStatus.startedAt %></span>
+        <span class="message">Refreshing prices: <%= refreshStatus.processedAssets %> / <%= refreshStatus.totalAssets %></span>
       <% } else if (refreshStatus && refreshStatus.status == 'COMPLETED') { %>
-        <span class="message">Last price refresh finished. OK: <%= refreshStatus.ok %>, Failed/skipped: <%= refreshStatus.failed %></span>
+        <span class="message">Prices refreshed: <%= refreshStatus.finishedAt %></span>
       <% } else if (refreshStatus && refreshStatus.status == 'ERROR') { %>
-        <span class="message">Last price refresh failed: <%= refreshStatus.error %></span>
+        <span class="message">Price refresh needs attention</span>
       <% } %>
     </div>
     <h2>Combined Summary</h2>

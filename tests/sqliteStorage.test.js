@@ -239,6 +239,26 @@ async function main() {
   assert.strictEqual(replacedHistoryRows[0].source, 'YAHOO_CHART');
   assert.strictEqual(replacedHistoryRows[0].close, 7150);
 
+  var coverageRows = db.collection('priceHistoryCoverage');
+  var coverageDoc = {
+    coverageKey: '7974.T|JQUANTS|COMPLETE|2026-06-01|2026-06-12',
+    symbol: '7974.T',
+    source: 'JQUANTS',
+    startDate: '2026-06-01',
+    endDate: '2026-06-12',
+    status: 'COMPLETE',
+    reason: 'SAVED_PRICE_ROW',
+    expectedCount: 10,
+    receivedCount: 10
+  };
+  await updateOne(coverageRows, { coverageKey: coverageDoc.coverageKey }, { $set: coverageDoc }, { upsert: true });
+  var storedCoverage = await toArray(coverageRows.find({ symbol: '7974.T', source: 'JQUANTS' }));
+  assert.strictEqual(storedCoverage.length, 1);
+  assert.strictEqual(storedCoverage[0].status, 'COMPLETE');
+  assert.strictEqual(storedCoverage[0].receivedCount, 10);
+  var deletedCoverage = await deleteMany(coverageRows, { symbol: '7974.T', source: 'JQUANTS' });
+  assert.strictEqual(deletedCoverage.deletedCount, 1);
+
   var deletedRates = await deleteMany(fxRates, { pair: 'USDJPY', rateDate: '2026-06-12' });
   assert.strictEqual(deletedRates.deletedCount, 1);
   assert.strictEqual((await toArray(fxRates.find({ pair: 'USDJPY' }))).length, 0);

@@ -1,0 +1,377 @@
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" type="text/css" href="/menu.css">
+  <title>Price Update</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      color: #172126;
+      background: #f4f6f7;
+    }
+
+    .content {
+      margin: 22px;
+    }
+
+    .page-header,
+    .toolbar,
+    .progress-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .page-header {
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      letter-spacing: 0;
+    }
+
+    button {
+      min-height: 34px;
+      border: 1px solid #6e7f87;
+      background: #fff;
+      color: #172126;
+      padding: 6px 11px;
+      cursor: pointer;
+    }
+
+    button.primary {
+      border-color: #1f6a87;
+      background: #1f6a87;
+      color: #fff;
+    }
+
+    button:disabled {
+      cursor: default;
+      opacity: 0.5;
+    }
+
+    .message,
+    .progress-line {
+      border: 1px solid #bac8ce;
+      background: #fff;
+      padding: 8px 10px;
+    }
+
+    .toolbar {
+      margin: 12px 0;
+    }
+
+    .filter-group {
+      display: inline-flex;
+    }
+
+    .filter-group button + button {
+      border-left: 0;
+    }
+
+    .filter-group button.active {
+      background: #35444b;
+      color: #fff;
+    }
+
+    progress {
+      width: min(360px, 65vw);
+      height: 14px;
+    }
+
+    .table-scroll {
+      overflow-x: auto;
+      border: 1px solid #aebdc4;
+      background: #fff;
+    }
+
+    table {
+      width: 100%;
+      min-width: 1460px;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid #d4dde1;
+      padding: 7px 8px;
+      text-align: left;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #314f5d;
+      color: #fff;
+      font-weight: 600;
+    }
+
+    tbody tr:nth-child(even) {
+      background: #edf3f5;
+    }
+
+    tbody tr[hidden] {
+      display: none;
+    }
+
+    .asset-name {
+      width: 300px;
+      max-width: 300px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .number {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .status {
+      display: inline-block;
+      min-width: 82px;
+      padding: 3px 6px;
+      border: 1px solid #87969d;
+      background: #f5f7f8;
+      text-align: center;
+    }
+
+    .status-up-to-date {
+      border-color: #43805f;
+      background: #e5f3ea;
+      color: #24573d;
+    }
+
+    .status-needs-update {
+      border-color: #b07a18;
+      background: #fff4d8;
+      color: #724c0a;
+    }
+
+    .status-failed {
+      border-color: #ad4f48;
+      background: #fbe9e7;
+      color: #792d28;
+    }
+
+    details summary {
+      cursor: pointer;
+      color: #155675;
+    }
+
+    .interval-table {
+      min-width: 760px;
+      margin-top: 6px;
+      border: 1px solid #c4d0d5;
+    }
+
+    .interval-table th {
+      position: static;
+      background: #637983;
+    }
+
+    .error {
+      max-width: 240px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #792d28;
+    }
+
+    @media (max-width: 720px) {
+      .content {
+        margin: 14px 10px;
+      }
+
+      .page-header {
+        align-items: flex-start;
+      }
+    }
+  </style>
+  <script>
+    function highlightNav() {
+      var item = document.getElementById('prices');
+      if (item) item.className += ' active';
+    }
+
+    function formatNumbers() {
+      var cells = document.querySelectorAll('[data-number]');
+      for (var i = 0; i < cells.length; i++) {
+        var raw = cells[i].getAttribute('data-number');
+        if (raw === '') {
+          cells[i].textContent = '-';
+          continue;
+        }
+        var value = Number(raw);
+        cells[i].textContent = isFinite(value) ? value.toLocaleString(undefined, { maximumFractionDigits: 4 }) : '';
+      }
+    }
+
+    function setFilter(filter) {
+      var buttons = document.querySelectorAll('[data-filter]');
+      var rows = document.querySelectorAll('#price-rows > tr');
+      for (var i = 0; i < buttons.length; i++) {
+        buttons[i].classList.toggle('active', buttons[i].getAttribute('data-filter') == filter);
+      }
+      for (var j = 0; j < rows.length; j++) {
+        var status = rows[j].getAttribute('data-status');
+        rows[j].hidden = filter != 'ALL' && status != filter;
+      }
+    }
+
+    function updateProgress(status) {
+      var line = document.getElementById('refresh-progress');
+      var meter = document.getElementById('refresh-meter');
+      var text = document.getElementById('refresh-text');
+      var updateButton = document.getElementById('update-all');
+      if (!line || !meter || !text) return;
+      line.hidden = status.status == 'IDLE';
+      meter.max = Math.max(1, Number(status.totalAssets || 0));
+      meter.value = Number(status.processedAssets || 0);
+      text.textContent = status.status == 'RUNNING'
+        ? 'Refreshing ' + (status.currentSymbol || '') + '  ' + status.processedAssets + ' / ' + status.totalAssets + '  History requests: ' + status.historyRequests
+        : 'Last refresh: ' + status.status + '  OK: ' + status.ok + '  Failed: ' + status.failed + '  History requests: ' + status.historyRequests;
+      if (updateButton) updateButton.disabled = status.status == 'RUNNING';
+    }
+
+    function pollRefresh() {
+      fetch('/prices/status', { headers: { 'Accept': 'application/json' } })
+        .then(function (response) { return response.json(); })
+        .then(function (status) {
+          updateProgress(status);
+          if (status.status == 'RUNNING') {
+            window.setTimeout(pollRefresh, 1500);
+          } else if (document.body.getAttribute('data-initial-status') == 'RUNNING') {
+            window.location.reload();
+          }
+        });
+    }
+
+    window.onload = function () {
+      highlightNav();
+      formatNumbers();
+      setFilter('ALL');
+      if (document.body.getAttribute('data-initial-status') == 'RUNNING') {
+        pollRefresh();
+      }
+    };
+  </script>
+</head>
+
+<body data-initial-status="<%= refreshStatus.status %>">
+  <%- include('partials/menu'); -%>
+  <main class="content">
+    <div class="page-header">
+      <div>
+        <h1>Price Update</h1>
+        <div>Report date (JST): <strong><%= reportDate %></strong></div>
+      </div>
+      <form action="/prices/refresh" method="post">
+        <button id="update-all" class="primary" type="submit" <%= refreshStatus.status == 'RUNNING' ? 'disabled' : '' %>>Update All</button>
+      </form>
+    </div>
+
+    <% if (message) { %>
+      <div class="message"><%= message %></div>
+    <% } %>
+
+    <div id="refresh-progress" class="progress-line" <%= refreshStatus.status == 'IDLE' ? 'hidden' : '' %>>
+      <progress id="refresh-meter" max="<%= Math.max(1, refreshStatus.totalAssets || 0) %>" value="<%= refreshStatus.processedAssets || 0 %>"></progress>
+      <span id="refresh-text">
+        <% if (refreshStatus.status == 'RUNNING') { %>
+          Refreshing <%= refreshStatus.currentSymbol %> <%= refreshStatus.processedAssets %> / <%= refreshStatus.totalAssets %>
+        <% } else { %>
+          Last refresh: <%= refreshStatus.status %> &nbsp; OK: <%= refreshStatus.ok %> &nbsp; Failed: <%= refreshStatus.failed %> &nbsp; History requests: <%= refreshStatus.historyRequests %>
+        <% } %>
+      </span>
+    </div>
+
+    <div class="toolbar">
+      <div class="filter-group" role="group" aria-label="Price status filter">
+        <button type="button" data-filter="ALL" onclick="setFilter('ALL')">All</button>
+        <button type="button" data-filter="NEEDS_UPDATE" onclick="setFilter('NEEDS_UPDATE')">Needs update</button>
+        <button type="button" data-filter="FAILED" onclick="setFilter('FAILED')">Failed</button>
+        <button type="button" data-filter="UP_TO_DATE" onclick="setFilter('UP_TO_DATE')">Up to date</button>
+      </div>
+    </div>
+
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Asset</th>
+            <th>Symbol</th>
+            <th>Current Price</th>
+            <th>Provider Price Date</th>
+            <th>Completed History</th>
+            <th>Live Snapshot</th>
+            <th>Pending</th>
+            <th>Provider</th>
+            <th>Last Attempt</th>
+            <th>Next Retry</th>
+            <th>Error</th>
+            <th>Coverage</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="price-rows">
+          <% rows.forEach(function (row) { %>
+            <tr data-status="<%= row.status %>">
+              <td><span class="status status-<%= row.status.toLowerCase().replace(/_/g, '-') %>"><%= row.status.replace(/_/g, ' ') %></span></td>
+              <td class="asset-name" title="<%= row.name %>"><%= row.name %></td>
+              <td><%= row.symbol %></td>
+              <td class="number" data-number="<%= row.currentPrice %>"></td>
+              <td title="<%= row.currentPriceDateBasis %> <%= row.currentPriceSourceTimezone %>"><%= row.currentPriceDate || '-' %></td>
+              <td><%= row.firstCompletedDate && row.lastCompletedDate ? row.firstCompletedDate + ' to ' + row.lastCompletedDate : '-' %></td>
+              <td><%= row.latestSnapshotDate || '-' %></td>
+              <td class="number"><%= row.pendingCount %><%= row.deferredCount ? ' (deferred ' + row.deferredCount + ')' : '' %></td>
+              <td><%= row.sources || '-' %></td>
+              <td><%= row.lastAttemptAt || '-' %></td>
+              <td><%= row.nextRetryAt || '-' %></td>
+              <td class="error" title="<%= row.historyError || row.priceError %>"><%= row.historyError || row.priceError || '-' %></td>
+              <td>
+                <details>
+                  <summary><%= row.intervals.length %> intervals</summary>
+                  <table class="interval-table">
+                    <thead>
+                      <tr><th>Source</th><th>Range</th><th>Status</th><th>Reason</th><th>Attempt</th><th>Retry</th></tr>
+                    </thead>
+                    <tbody>
+                      <% row.intervals.forEach(function (interval) { %>
+                        <tr>
+                          <td><%= interval.source %></td>
+                          <td><%= interval.startDate %> to <%= interval.endDate %></td>
+                          <td><%= interval.status %></td>
+                          <td><%= interval.reason || '-' %></td>
+                          <td><%= interval.attemptCount || 0 %></td>
+                          <td><%= interval.retryAfter || '-' %></td>
+                        </tr>
+                      <% }); %>
+                    </tbody>
+                  </table>
+                </details>
+              </td>
+              <td>
+                <form action="/prices/<%= encodeURIComponent(row.symbol) %>/refresh" method="post">
+                  <button type="submit" <%= refreshStatus.status == 'RUNNING' ? 'disabled' : '' %>>Retry</button>
+                </form>
+              </td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </main>
+</body>
+
+</html>
