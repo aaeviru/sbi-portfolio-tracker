@@ -18,12 +18,39 @@ The app is built for personal analysis. It is not tax software and does not make
 - Calculate FIFO realized P/L and remaining cost.
 - Refresh latest prices for Japanese stocks, US stocks, mapped funds, and gold.
 - Save daily stock, fund, and gold price history for charting.
+- Track price-history coverage by expected market session, including completed, no-data, failed, and deferred-retry intervals.
+- Use a dedicated Price Update page with progress, status filters, per-asset retry, provider dates, and coverage details.
 - Store USD/JPY FX rates for US stock JPY valuation.
 - Show a portfolio summary with market value, unrealized P/L, FIFO realized P/L, dividend/distribution income, total realized P/L, day P/L, and allocation percentage.
 - Show transaction pages with pagination.
-- Show trade charts with saved price history and buy/sell markers.
+- Show trade charts with saved price history, newest-first buy/sell history, and technical indicators.
 - Show combined monthly/yearly summary history with historical period prices, Combined Total P/L diff, and a Detail drilldown for period changes.
 - Generate a daily portfolio report from the local SQLite snapshot, either with the OpenAI API or by copying an English, Chinese, or Japanese prompt into ChatGPT.
+- Show the application version in the navigation bar.
+
+## Version 0.1.3
+
+This release prepares a more reliable, inspectable price-update workflow:
+
+- Move price updates from the Summary page to a dedicated `/prices` page with live progress, status filters, provider dates, and per-asset retry.
+- Fill multiple missing history intervals in one update run, newest first, under a shared request and time budget.
+- Persist market-session coverage as `COMPLETE`, `NO_DATA`, or `FAILED`, so successful and terminal no-data ranges are not requested repeatedly.
+- Add retry backoff for provider errors and a manual retry action that bypasses the waiting period for one asset.
+- Judge expected dates with Japanese and US market calendars instead of treating every weekday as a trading session.
+- Keep live quote snapshots separate from completed daily history when deciding whether a date is covered.
+- Fix foreign-currency MMF valuation and normalize SBI Okasan MMF name variants so one holding is not split into duplicate assets.
+- Use Tokyo, New York, fund publication, and imported MMF dates according to each asset's data domain.
+
+## Version 0.1.2
+
+This release expanded chart analysis and historical data coverage:
+
+- Add SMA 20/50/200, Bollinger Bands 20/2, RSI 14, and MACD 12/26/9 to the Trade Chart.
+- Show 20-day annualized volatility, 52-week high/low, and drawdown when enough history is available.
+- Backfill older Japanese stock history through J-Quants while keeping Yahoo-compatible data for recent and archive ranges.
+- Start history from the earlier of two years ago or the oldest BUY date.
+- List trade history newest first and show the application version in the navigation bar.
+- Normalize SBI Okasan US-dollar money-market-fund name variants.
 
 ## Version 0.1.1
 
@@ -112,7 +139,7 @@ Reports are for personal analysis only. They are not investment, legal, or tax a
 
 ## Optional J-Quants Setup
 
-J-Quants Free supplies up to two years of Japanese stock daily history with a 12-week delay. Enter the key without echoing it, save it as a user environment variable, and also load it into the current PowerShell session before starting the app:
+The Japanese-stock history split assumes the free-tier coverage used when this integration was built: J-Quants supplies the older part of the latest two years, while Yahoo-compatible history supplies the newest 12 weeks and dates older than two years. Enter the key without echoing it, save it as a user environment variable, and also load it into the current PowerShell session before starting the app:
 
 ```powershell
 $secret = Read-Host "Enter your J-Quants API key" -AsSecureString
@@ -125,6 +152,17 @@ npm start
 ```
 
 The check must print `True`. The key is read only by the server and is not saved in SQLite, browser storage, or Git.
+
+The app still starts without this key, but Japanese-stock dates assigned to the J-Quants range will remain failed until a key is configured or those dates already exist in SQLite.
+
+Optional price-history limits:
+
+```powershell
+$env:PRICE_HISTORY_MAX_REQUESTS="40"
+$env:PRICE_HISTORY_MAX_DURATION_MS="600000"
+```
+
+These values limit one Update All run. Failed intervals are saved with retry backoff, so a later run can continue without starting over.
 
 ## Docker
 
@@ -164,8 +202,9 @@ http://localhost:8080/
 
 - `/import` - upload SBI CSV files for transactions, dividends/distributions, FX, and gold.
 - `/transactions` - view imported normalized transactions.
-- `/summary` - view portfolio summary and update prices.
-- `/trade-chart` - view price history with buy/sell markers.
+- `/summary` - view the combined portfolio and FX summary, and edit fund price-source mappings.
+- `/prices` - update current prices and history, monitor progress, filter status, inspect coverage, and retry one asset.
+- `/trade-chart` - view price history, buy/sell markers, and technical indicators.
 - `/history` - view monthly/yearly combined summary history, P/L changes, and period detail attribution.
 - `/daily-report` - build a daily portfolio report snapshot, generate an API-backed report, or copy a ChatGPT prompt in English, Chinese, or Japanese.
 
@@ -215,25 +254,36 @@ This keeps same-day buy/sell FIFO behavior stable.
 
 ## Price Refresh
 
-Use `Update Prices` on `/summary`.
+Use `Update All` on `/prices`. The job runs in the background and the page polls `/prices/status` to show progress. `Retry` runs the same workflow for one asset and ignores that asset's current retry waiting period.
 
 Current behavior:
 
 - Skips assets with zero net quantity.
 - Fetches latest stock prices from Yahoo-compatible chart data.
-- For Japanese stock history, Yahoo supplies the newest 12 weeks and J-Quants Free supplies older dates within its two-year history limit. Yahoo is also the fallback for any period before that limit when the first BUY is older.
-- A successful J-Quants range request is recorded per stock, including a valid no-data result, so later price refreshes do not request the same range again.
+- For Japanese stock history, Yahoo supplies the newest 12 weeks, J-Quants supplies older dates within the latest two years, and Yahoo archive history supplies dates older than two years.
+- Price history starts from the earlier of two years ago or the oldest BUY date for each active stock, fund, or gold holding.
 - Fetches mapped fund prices only when a fund mapping URL/code is saved.
 - Fetches gold price and converts it to JPY per gram.
+- Uses the imported SBI transaction price for foreign-currency MMFs; MMFs are not sent to a market-history provider.
 - Saves stock daily OHLC price history.
 - Saves mapped fund NAV history. Fund NAV is stored per 10,000 units for charting and converted back to unit price for summary valuation.
 - Saves gold daily history by combining `GC=F` gold futures with `JPY=X` USD/JPY and converting each date to JPY per gram.
 - Saves a latest-price snapshot row when the latest quote succeeds but the daily history endpoint has no row yet.
-- Fetches J-Quants Free's eligible range in one logical request per Japanese stock and records completed subranges so they are not requested again. Pagination may add HTTP requests.
+- Does not count a live snapshot as a completed daily market session.
+- Saves interval coverage as `COMPLETE`, `NO_DATA`, or `FAILED`. Completed rows and valid pre-listing/no-data dates are not fetched again.
+- Requests missing intervals newest first. One run defaults to at most 40 history requests and 10 minutes across all assets.
+- Defers failed dates with exponential backoff from 1 to 24 hours; rate-limit failures wait 15 minutes. Per-asset Retry bypasses the wait once.
 - Paces J-Quants requests at 12.5-second intervals for the Free-plan rate limit.
-- Fetches up to 30 days per Yahoo recent-history request and up to 365 days per Yahoo archive request.
-- Price history starts from the earlier of two years ago or the oldest BUY date for each held stock, fund, or gold position.
-- Uses a delay between asset requests and stops on rate limits.
+- Uses bounded provider windows and a short delay between assets, and stops the remaining work when a provider rate limit requires it.
+
+The history boundary called "today" depends on the asset:
+
+- Japanese stocks use the latest completed Tokyo market date.
+- US stocks and gold use the latest completed New York market session.
+- Funds use the latest published NAV date when known.
+- MMFs use the imported SBI transaction price date.
+
+Expected history dates exclude weekends and known Japanese/US market holidays. The Price Update table shows the provider price date, completed-history range, live snapshot date, pending session count, next retry, and the persisted coverage intervals.
 
 For US stocks, chart comparison dates are shifted to the US market date when needed, while the original SBI transaction date remains visible in tables.
 
@@ -269,6 +319,16 @@ The x-axis can be labeled weekly, monthly, or yearly. For ranges smaller than al
 
 The chart's trade-history table lists BUY and SELL records newest first.
 
+Available technical overlays and panels:
+
+- SMA 20, SMA 50, and SMA 200
+- Bollinger Bands 20/2
+- RSI 14 with 30/70 reference levels
+- MACD 12/26/9 with signal line and histogram
+- 20-day annualized realized volatility, 52-week high/low, and drawdown summary values
+
+Indicators are calculated locally from saved daily closing prices. Values remain unavailable until enough completed daily history exists. Money-market funds are excluded because their stable imported NAV is not useful for these signals.
+
 ## Tests
 
 ```powershell
@@ -277,11 +337,18 @@ npm test
 
 Current tests cover:
 
-- portfolio FIFO summary calculations
-- stock, fund, US stock, dividend/distribution, FX, and gold parsing helpers
-- SQLite storage adapter behavior
-- daily report snapshot and ChatGPT prompt generation
-- trade chart data preparation
+- authentication and application-version wiring
+- report, Tokyo-market, New York-market, fund-publication, and MMF date domains
+- Japanese and US market-calendar sessions and holidays
+- interval coverage normalization, missing-window selection, no-data classification, and retry backoff
+- Price Update page routes and controls
+- portfolio FIFO, MMF, income, FX conversion, day-change, and mixed-asset summary calculations
+- stock, fund, US stock, dividend/distribution, FX, gold, Yahoo, and J-Quants parsing helpers
+- SQLite storage, including persisted price-history coverage
+- SMA, Bollinger Bands, RSI, MACD, volatility, and 52-week calculations
+- daily report snapshots and multilingual ChatGPT prompts
+- trade-chart preparation, source priority, markers, and newest-first history
+- monthly/yearly combined history and period-detail attribution
 
 ## License
 
