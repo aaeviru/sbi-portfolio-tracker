@@ -305,6 +305,7 @@
   <%- include('partials/menu'); -%>
   <div class="content">
     <h1>Trade Chart</h1>
+    <p class="date-context">Report date (JST): <strong><%= reportDate %></strong></p>
 
     <% if (assets.length === 0) { %>
       <p>No stock or fund buy/sell transactions are imported yet.</p>
@@ -361,8 +362,8 @@
         <caption>Trades</caption>
         <thead>
           <tr>
-            <th>Date</th>
-            <th>Market Date</th>
+            <th>SBI Date</th>
+            <th>Chart Market Date</th>
             <th>Side</th>
             <th>Price</th>
             <th>Quantity</th>
@@ -378,7 +379,8 @@
         <caption>Saved Price History</caption>
         <thead>
           <tr>
-            <th>Date</th>
+            <th>Provider Price Date</th>
+            <th>Date Meaning</th>
             <th>Open</th>
             <th>High</th>
             <th>Low</th>
@@ -598,7 +600,8 @@
         'BUY ' + asset.buyCount,
         'SELL ' + asset.sellCount,
         'Trades ' + asset.firstDate + ' to ' + asset.lastDate,
-        'History ' + (asset.historyCount || 0) + (asset.historyFirstDate ? ' / ' + asset.historyFirstDate + ' to ' + asset.historyLastDate : '')
+        'Completed ' + (asset.priceDateLabel || 'price date') + ' history ' + (asset.completedHistoryCount || 0) + (asset.completedHistoryFirstDate ? ' / ' + asset.completedHistoryFirstDate + ' to ' + asset.completedHistoryLastDate : ''),
+        'Live snapshots ' + (asset.snapshotCount || 0)
       ];
       var technical = asset.technicalIndicators || {};
       values.push('Indicators ' + (technical.status || 'NO_HISTORY'));
@@ -1000,6 +1003,7 @@
         var tr = document.createElement('tr');
         [
           row.date,
+          (row.dateBasis || 'SOURCE_DATE') + (row.sourceTimezone ? ' / ' + row.sourceTimezone : '') + (row.sessionStatus ? ' / ' + row.sessionStatus : ''),
           formatNumber(row.open),
           formatNumber(row.high),
           formatNumber(row.low),
@@ -1019,7 +1023,7 @@
       if (!asset.priceHistory || asset.priceHistory.length === 0) {
         var tr = document.createElement('tr');
         var td = document.createElement('td');
-        td.colSpan = 9;
+        td.colSpan = 10;
         td.textContent = 'No saved price history yet. Use Update Prices on the Summary page.';
         tr.appendChild(td);
         body.appendChild(tr);

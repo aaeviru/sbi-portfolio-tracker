@@ -4,7 +4,7 @@
   "description": "SBI portfolio import and summary tracker",
   "main": "app.js",
   "scripts": {
-    "test": "node tests/auth.test.js && node tests/portfolioSummary.test.js && node tests/priceParser.test.js && node tests/sqliteStorage.test.js && node tests/technicalIndicators.test.js && node tests/dailyReport.test.js && node tests/tradeChart.test.js && node tests/combinedSummaryHistory.test.js",
+    "test": "node tests/auth.test.js && node tests/dateDomains.test.js && node tests/portfolioSummary.test.js && node tests/priceParser.test.js && node tests/sqliteStorage.test.js && node tests/technicalIndicators.test.js && node tests/dailyReport.test.js && node tests/tradeChart.test.js && node tests/combinedSummaryHistory.test.js",
     "start": "node app.js"
   },
   "author": "iriyano",

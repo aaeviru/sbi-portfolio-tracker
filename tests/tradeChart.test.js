@@ -99,7 +99,8 @@ var usStock = findAsset(assets, 'MCD');
 assert(usStock);
 assert.strictEqual(usStock.priceUnit, 'USD/share');
 assert.strictEqual(usStock.points[0].date, '2026-06-07');
-assert.strictEqual(usStock.points[0].marketDate, '2026-06-06');
+assert.strictEqual(usStock.points[0].marketDate, '2026-06-07');
+assert.strictEqual(usStock.points[0].marketDateBasis, 'SBI_SOURCE_DATE');
 
 var gold = findAsset(assets, 'GOLD_JPY');
 assert(gold);
@@ -118,6 +119,20 @@ sortTradeChartAssetsBySummaryRows(assets, [
 assert.deepStrictEqual(assets.map(function (asset) { return asset.symbol; }), ['MCD', 'FUND:TOPIX', '7974.T', 'GOLD_JPY']);
 
 attachPriceHistoryToTradeChartData(assets, [
+  {
+    symbol: 'MCD',
+    assetType: 'US_STOCK',
+    priceDate: '2026-06-05',
+    open: 285,
+    high: 289,
+    low: 284,
+    close: 287,
+    volume: 500000,
+    currency: 'USD',
+    source: 'YAHOO_CHART',
+    sourceTimezone: 'America/New_York',
+    dateBasis: 'EXCHANGE_SESSION'
+  },
   {
     symbol: '7974.T',
     priceDate: '2026-06-12',
@@ -208,6 +223,7 @@ attachPriceHistoryToTradeChartData(assets, [
 
 stock = findAsset(assets, '7974.T');
 assert.strictEqual(stock.historyCount, 2);
+assert.strictEqual(stock.completedHistoryCount, 2);
 assert.strictEqual(stock.historyFirstDate, '2026-06-11');
 assert.strictEqual(stock.historyLastDate, '2026-06-12');
 assert.strictEqual(stock.priceHistory[0].close, 12050);
@@ -224,10 +240,17 @@ assert.strictEqual(fund.priceHistory[0].source, 'YAHOO_FUND_HISTORY');
 assert.strictEqual(fund.priceHistory[0].close, 92000);
 assert.strictEqual(fund.technicalIndicators.status, 'PARTIAL');
 
+usStock = findAsset(assets, 'MCD');
+assert.strictEqual(usStock.points[0].date, '2026-06-07');
+assert.strictEqual(usStock.points[0].marketDate, '2026-06-05');
+assert.strictEqual(usStock.points[0].marketDateBasis, 'PREVIOUS_US_MARKET_SESSION');
+assert.strictEqual(usStock.completedHistoryLastDate, '2026-06-05');
+
 var viewPath = path.join(__dirname, '..', 'views', 'trade-chart.ejs');
 var html = ejs.render(fs.readFileSync(viewPath, 'utf8'), {
   assets: assets,
   chartDataJson: JSON.stringify(assets),
+  reportDate: '2026-06-18',
   appVersion: require('../package.json').version
 }, { filename: viewPath });
 assert.ok(html.indexOf('v' + require('../package.json').version) >= 0);
@@ -235,6 +258,8 @@ assert.ok(html.indexOf('Technical indicators') >= 0);
 assert.ok(html.indexOf('showSma200') >= 0);
 assert.ok(html.indexOf('id="rsiChart"') >= 0);
 assert.ok(html.indexOf('id="macdChart"') >= 0);
+assert.ok(html.indexOf('Report date (JST)') >= 0);
+assert.ok(html.indexOf('Chart Market Date') >= 0);
 assert.ok(html.indexOf("var rows = (asset.points || []).slice().reverse();") >= 0);
 var scripts = html.match(/<script[^>]*>[\s\S]*?<\/script>/g) || [];
 scripts.forEach(function (script, index) {

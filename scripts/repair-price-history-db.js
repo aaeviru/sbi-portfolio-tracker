@@ -2,6 +2,7 @@ var fs = require('fs');
 var path = require('path');
 var sqlite3 = require('sqlite3').verbose();
 var priceHistory = require('../app');
+var dateDomains = require('../lib/dateDomains');
 
 var dbPath = process.env.SBI_PORTFOLIO_DB_PATH || path.join(__dirname, '..', 'data', 'sbi-portfolio-tracker.sqlite');
 
@@ -45,25 +46,19 @@ function fetchRows(fetcher, asset, startDate, endDate) {
   });
 }
 
-function previousWeekday(dateText) {
-  var date = new Date(dateText + 'T00:00:00Z');
-  do {
-    date.setUTCDate(date.getUTCDate() - 1);
-  } while (date.getUTCDay() === 0 || date.getUTCDay() === 6);
-  return date.toISOString().slice(0, 10);
-}
-
-function makeAssetPlans(assets, transactions, today) {
+function makeAssetPlans(assets, transactions, now) {
   var active = priceHistory.findActiveQuantitySymbols(transactions);
   var firstBuys = priceHistory.findOldestBuyDatesBySymbol(transactions);
+  var reportDate = dateDomains.getReportDate(now);
   var plans = [];
 
   assets.forEach(function (asset) {
     if (!active[asset.symbol] || asset.assetSubType == 'MMF') {
       return;
     }
-    var targetStartDate = priceHistory.getPriceHistoryTargetStartDate(firstBuys[asset.symbol], today);
-    var ranges = priceHistory.getPriceHistorySourceRanges(asset, today, targetStartDate);
+    var targetStartDate = priceHistory.getPriceHistoryTargetStartDate(firstBuys[asset.symbol], reportDate);
+    var historyEndLimit = priceHistory.getHistoryEndLimitDate(asset, now);
+    var ranges = priceHistory.getPriceHistorySourceRanges(asset, reportDate, targetStartDate, historyEndLimit);
     var yahooRanges = ranges.filter(function (range) {
       return range.source == 'YAHOO_CHART' || range.source == 'YAHOO_FUND_HISTORY' || range.source == 'YAHOO_GOLD_HISTORY';
     });
@@ -193,8 +188,9 @@ async function main() {
     var transactionRows = await all(db, 'SELECT doc_json FROM transactions ORDER BY trade_date_time');
     var assets = parseRows(assetRows);
     var transactions = parseRows(transactionRows);
-    var today = new Date().toISOString().slice(0, 10);
-    var plans = makeAssetPlans(assets, transactions, today);
+    var now = new Date();
+    var reportDate = dateDomains.getReportDate(now);
+    var plans = makeAssetPlans(assets, transactions, now);
     var results = await fetchAllPlans(plans);
     var backupPath = dbPath + '.backup-before-price-history-repair-' + timestamp();
     fs.copyFileSync(dbPath, backupPath);
@@ -205,7 +201,7 @@ async function main() {
       assets: results.length,
       priceRows: saved.priceRows,
       fxRows: saved.fxRows,
-      throughDate: previousWeekday(today)
+      reportDate: reportDate
     }, null, 2));
   } finally {
     db.close();

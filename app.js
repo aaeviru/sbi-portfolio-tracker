@@ -15,6 +15,7 @@ var attachPriceHistoryToTradeChartData = require('./lib/tradeChart').attachPrice
 var sortTradeChartAssetsBySummaryRows = require('./lib/tradeChart').sortTradeChartAssetsBySummaryRows;
 var withDb = require('./lib/db').withDb;
 var buildDailyReportSnapshot = require('./lib/dailyReport').buildDailyReportSnapshot;
+var dateDomains = require('./lib/dateDomains');
 var generateDailyReport = require('./lib/openaiReport').generateDailyReport;
 var buildChatGptReportPrompt = require('./lib/openaiReport').buildChatGptReportPrompt;
 var buildChineseChatGptReportPrompt = require('./lib/openaiReport').buildChineseChatGptReportPrompt;
@@ -314,11 +315,7 @@ function normalizeDate(value) {
 }
 
 function getLocalIsoDate(date) {
-  date = date || new Date();
-  var year = date.getFullYear();
-  var month = String(date.getMonth() + 1).padStart(2, '0');
-  var day = String(date.getDate()).padStart(2, '0');
-  return year + '-' + month + '-' + day;
+  return getReportDate(date);
 }
 
 function normalizeDateTime(value) {
@@ -1231,9 +1228,6 @@ function getHistoryBuyDate(tx) {
   if (!isValidDateText(date)) {
     return '';
   }
-  if (tx.assetType == 'US_STOCK') {
-    return addDays(date, -1);
-  }
   return date;
 }
 
@@ -1572,6 +1566,16 @@ function fetchTextWithHeaders(url, headers, callback) {
   }).on('error', callback);
 }
 
+function getYahooAssetForSymbol(symbol) {
+  if (symbol == 'GC=F') {
+    return { symbol: symbol, assetType: 'GOLD' };
+  }
+  return {
+    symbol: symbol,
+    assetType: /\.T$/.test(symbol) ? 'STOCK' : 'US_STOCK'
+  };
+}
+
 function fetchYahooChartPrice(symbol, callback) {
   var url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(symbol) + '?range=1d&interval=1d';
   fetchText(url, function (err, data) {
@@ -1586,15 +1590,23 @@ function fetchYahooChartPrice(symbol, callback) {
       var meta = result && result.meta;
       var price = meta && meta.regularMarketPrice;
       var marketTime = meta && meta.regularMarketTime;
+      var sourceTimezone = dateDomains.getAssetTimeZone(getYahooAssetForSymbol(symbol), meta);
 
       if (!isFinite(price)) {
         callback(new Error('Price not found'));
         return;
       }
+      if (!isFinite(marketTime)) {
+        callback(new Error('Price timestamp not found'));
+        return;
+      }
 
       callback(null, {
         price: Number(price),
-        priceDate: marketTime ? new Date(marketTime * 1000).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)
+        priceDate: dateDomains.getProviderDate(marketTime, sourceTimezone),
+        sourceTimestamp: new Date(marketTime * 1000).toISOString(),
+        sourceTimezone: sourceTimezone,
+        dateBasis: 'PROVIDER_TIMESTAMP'
       });
     } catch (parseErr) {
       callback(parseErr);
@@ -1604,8 +1616,10 @@ function fetchYahooChartPrice(symbol, callback) {
 
 function parseYahooChartDailyRates(json, pair) {
   var result = json.chart && json.chart.result && json.chart.result[0];
+  var meta = result && result.meta;
   var timestamps = result && result.timestamp;
   var quote = result && result.indicators && result.indicators.quote && result.indicators.quote[0];
+  var sourceTimezone = dateDomains.getAssetTimeZone({ assetType: 'US_STOCK' }, meta);
   var rates = [];
 
   if (!timestamps || !quote || !quote.close) {
@@ -1618,7 +1632,8 @@ function parseYahooChartDailyRates(json, pair) {
       continue;
     }
 
-    var rateDate = new Date(timestamps[i] * 1000).toISOString().slice(0, 10);
+    var sourceTimestamp = new Date(timestamps[i] * 1000).toISOString();
+    var rateDate = dateDomains.getProviderDate(timestamps[i], sourceTimezone);
     rates.push({
       pair: pair,
       rateDate: rateDate,
@@ -1629,6 +1644,10 @@ function parseYahooChartDailyRates(json, pair) {
       low: isNumber(quote.low && quote.low[i]) ? Number(quote.low[i]) : null,
       close: Number(close),
       source: 'YAHOO_CHART',
+      sourceTimestamp: sourceTimestamp,
+      sourceTimezone: sourceTimezone,
+      dateBasis: 'PROVIDER_TIMESTAMP',
+      sessionStatus: 'COMPLETED',
       fetchedAt: new Date(),
       status: 'OK',
       error: ''
@@ -1647,7 +1666,12 @@ function fetchYahooChartDailyRates(symbol, pair, range, callback) {
     }
 
     try {
-      var rates = parseYahooChartDailyRates(JSON.parse(data), pair);
+      var json = JSON.parse(data);
+      var result = json.chart && json.chart.result && json.chart.result[0];
+      var completedDate = getHistoryEndLimitDate({ symbol: symbol, assetType: 'US_STOCK' }, new Date(), result && result.meta);
+      var rates = parseYahooChartDailyRates(json, pair).filter(function (row) {
+        return row.rateDate <= completedDate;
+      });
       if (rates.length === 0) {
         callback(new Error('Daily FX rates not found'));
         return;
@@ -1661,8 +1685,10 @@ function fetchYahooChartDailyRates(symbol, pair, range, callback) {
 
 function parseYahooChartDailyPriceHistory(json, asset) {
   var result = json.chart && json.chart.result && json.chart.result[0];
+  var meta = result && result.meta;
   var timestamps = result && result.timestamp;
   var quote = result && result.indicators && result.indicators.quote && result.indicators.quote[0];
+  var sourceTimezone = dateDomains.getAssetTimeZone(asset, meta);
   var rows = [];
 
   if (!timestamps || !quote || !quote.close) {
@@ -1675,10 +1701,11 @@ function parseYahooChartDailyPriceHistory(json, asset) {
       continue;
     }
 
+    var sourceTimestamp = new Date(timestamps[i] * 1000).toISOString();
     rows.push({
       symbol: asset.symbol,
       assetType: asset.assetType,
-      priceDate: new Date(timestamps[i] * 1000).toISOString().slice(0, 10),
+      priceDate: dateDomains.getProviderDate(timestamps[i], sourceTimezone),
       currency: asset.assetType == 'US_STOCK' ? 'USD' : 'JPY',
       open: isNumber(quote.open && quote.open[i]) ? Number(quote.open[i]) : null,
       high: isNumber(quote.high && quote.high[i]) ? Number(quote.high[i]) : null,
@@ -1686,6 +1713,10 @@ function parseYahooChartDailyPriceHistory(json, asset) {
       close: Number(close),
       volume: isNumber(quote.volume && quote.volume[i]) ? Number(quote.volume[i]) : null,
       source: 'YAHOO_CHART',
+      sourceTimestamp: sourceTimestamp,
+      sourceTimezone: sourceTimezone,
+      dateBasis: 'EXCHANGE_SESSION',
+      sessionStatus: 'COMPLETED',
       fetchedAt: new Date(),
       status: 'OK',
       error: ''
@@ -1708,8 +1739,12 @@ function fetchYahooChartDailyPriceHistory(asset, startDate, endDate, callback) {
     }
 
     try {
-      var rows = parseYahooChartDailyPriceHistory(JSON.parse(data), asset).filter(function (row) {
-        return row.priceDate >= startDate && row.priceDate <= endDate;
+      var json = JSON.parse(data);
+      var result = json.chart && json.chart.result && json.chart.result[0];
+      var completedDate = getHistoryEndLimitDate(asset, new Date(), result && result.meta);
+      var effectiveEndDate = minDateText(endDate, completedDate);
+      var rows = parseYahooChartDailyPriceHistory(json, asset).filter(function (row) {
+        return row.priceDate >= startDate && row.priceDate <= effectiveEndDate;
       });
       if (rows.length === 0) {
         callback(new Error('Daily price history not found'));
@@ -1768,6 +1803,9 @@ function parseJQuantsDailyPriceHistory(json, asset) {
       adjustedClose: optionalApiNumber(item.AdjC),
       adjustedVolume: optionalApiNumber(item.AdjVo),
       source: 'JQUANTS',
+      sourceTimezone: dateDomains.REPORT_TIME_ZONE,
+      dateBasis: 'PROVIDER_DATE',
+      sessionStatus: 'COMPLETED',
       fetchedAt: new Date(),
       status: 'OK',
       error: ''
@@ -1878,6 +1916,10 @@ function buildGoldPriceHistoryRows(goldRows, fxRows, asset) {
         close: null,
         volume: isFinite(goldRow.volume) ? goldRow.volume : null,
         source: 'YAHOO_GOLD_HISTORY',
+        sourceTimestamp: goldRow.sourceTimestamp || '',
+        sourceTimezone: goldRow.sourceTimezone || '',
+        dateBasis: 'EXCHANGE_SESSION',
+        sessionStatus: 'COMPLETED',
         fetchedAt: new Date(),
         status: 'ERROR',
         error: 'USDJPY daily FX rate missing for ' + goldRow.priceDate
@@ -1898,6 +1940,10 @@ function buildGoldPriceHistoryRows(goldRows, fxRows, asset) {
       source: 'YAHOO_GOLD_HISTORY',
       fxRate: fxClose,
       fxRateDate: fxRow.priceDate,
+      sourceTimestamp: goldRow.sourceTimestamp || '',
+      sourceTimezone: goldRow.sourceTimezone || '',
+      dateBasis: 'EXCHANGE_SESSION',
+      sessionStatus: 'COMPLETED',
       fetchedAt: new Date(),
       status: fxRow.priceDate == goldRow.priceDate ? 'OK' : 'FX_FALLBACK',
       error: fxRow.priceDate == goldRow.priceDate ? '' : 'USDJPY missing for ' + goldRow.priceDate + '; used ' + fxRow.priceDate
@@ -1920,7 +1966,7 @@ function findFxRowForGoldDate(fxByDate, fxDates, goldDate) {
 }
 
 function fetchGoldDailyPriceHistory(asset, startDate, endDate, callback) {
-  fetchYahooChartDailyPriceHistory({ symbol: 'GC=F', assetType: 'US_STOCK' }, startDate, endDate, function (goldErr, goldRows) {
+  fetchYahooChartDailyPriceHistory({ symbol: 'GC=F', assetType: 'GOLD' }, startDate, endDate, function (goldErr, goldRows) {
     if (goldErr) {
       callback(goldErr);
       return;
@@ -2012,8 +2058,8 @@ function minDateText(a, b) {
   return a < b ? a : b;
 }
 
-function todayText() {
-  return new Date().toISOString().slice(0, 10);
+function getReportDate(now) {
+  return dateDomains.getReportDate(now);
 }
 
 function hoursSince(value) {
@@ -2075,11 +2121,8 @@ function isPriceHistoryBoundsRow(row, asset) {
   return true;
 }
 
-function getHistoryEndLimitDate(asset, today) {
-  if (asset && (asset.assetType == 'STOCK' || asset.assetType == 'US_STOCK' || asset.assetType == 'GOLD')) {
-    return previousWeekdayOnOrBefore(addDays(today, -1));
-  }
-  return today;
+function getHistoryEndLimitDate(asset, now, yahooMeta) {
+  return dateDomains.getLatestCompletedMarketDate(asset, now, yahooMeta);
 }
 
 function getPriceHistoryTargetStartDate(firstBuyDate, today) {
@@ -2090,16 +2133,16 @@ function getPriceHistoryTargetStartDate(firstBuyDate, today) {
   return minDateText(firstBuyDate, twoYearsAgo);
 }
 
-function getPriceHistorySourceRanges(asset, today, targetStartDate) {
-  var historyEndLimit = getHistoryEndLimitDate(asset, today);
+function getPriceHistorySourceRanges(asset, reportDate, targetStartDate, historyEndLimit) {
+  historyEndLimit = historyEndLimit || getHistoryEndLimitDate(asset, new Date(reportDate + 'T00:00:00Z'));
   if (!isValidDateText(targetStartDate) || targetStartDate > historyEndLimit) {
     return [];
   }
 
   if (asset && asset.assetType == 'STOCK') {
-    var jquantsCutoffDate = addDays(today, -84);
+    var jquantsCutoffDate = addDays(reportDate, -84);
     var jquantsEndDate = previousWeekdayOnOrBefore(jquantsCutoffDate);
-    var jquantsStartLimit = addYears(today, -2);
+    var jquantsStartLimit = addYears(reportDate, -2);
     var yahooStartDate = nextWeekdayOnOrAfter(addDays(jquantsCutoffDate, 1));
     var ranges = [];
 
@@ -2381,6 +2424,9 @@ function parseYahooFundPriceHistory(json, asset) {
       volume: null,
       netAssetsBalance: parseFundHistoryNumber(row.netAssetsBalance),
       source: 'YAHOO_FUND_HISTORY',
+      sourceTimezone: dateDomains.REPORT_TIME_ZONE,
+      dateBasis: 'PROVIDER_DATE',
+      sessionStatus: 'COMPLETED',
       fetchedAt: new Date(),
       status: 'OK',
       error: ''
@@ -2496,11 +2542,13 @@ function refreshAssetPriceHistory(db, asset, callback) {
       return;
     }
 
-    var today = todayText();
-    var targetStartDate = getPriceHistoryTargetStartDate(asset.priceHistoryStartDate, today);
+    var now = new Date();
+    var reportDate = getReportDate(now);
+    var historyEndLimit = getHistoryEndLimitDate(asset, now);
+    var targetStartDate = getPriceHistoryTargetStartDate(asset.priceHistoryStartDate, reportDate);
     var sourceRanges = getUncoveredPriceHistorySourceRanges(
       asset,
-      getPriceHistorySourceRanges(asset, today, targetStartDate)
+      getPriceHistorySourceRanges(asset, reportDate, targetStartDate, historyEndLimit)
     );
     var fetchWindow = getNextPriceHistorySourceWindow(bounds, sourceRanges);
     var historySource = fetchWindow.source;
@@ -2610,6 +2658,10 @@ function upsertFetchedFxRows(db, fxRows, callback) {
       low: row.low,
       close: row.close,
       source: row.source,
+      sourceTimestamp: row.sourceTimestamp || '',
+      sourceTimezone: row.sourceTimezone || '',
+      dateBasis: row.dateBasis || '',
+      sessionStatus: row.sessionStatus || '',
       fetchedAt: row.fetchedAt,
       status: row.status,
       error: row.error
@@ -2649,7 +2701,11 @@ function fetchGoldPrice(callback) {
       }
       callback(null, {
         price: Math.round(pricePerGramJpy * 100) / 100,
-        priceDate: goldResult.priceDate || fxResult.priceDate || new Date().toISOString().slice(0, 10)
+        priceDate: goldResult.priceDate || fxResult.rateDate,
+        fxRateDate: fxResult.rateDate,
+        sourceTimestamp: goldResult.sourceTimestamp || '',
+        sourceTimezone: goldResult.sourceTimezone || '',
+        dateBasis: goldResult.dateBasis || 'PROVIDER_TIMESTAMP'
       });
     });
   });
@@ -2674,6 +2730,9 @@ function fetchUsdJpyRate(callback) {
       pair: 'USDJPY',
       rate: result.price,
       rateDate: result.priceDate,
+      sourceTimestamp: result.sourceTimestamp || '',
+      sourceTimezone: result.sourceTimezone || '',
+      dateBasis: result.dateBasis || 'PROVIDER_TIMESTAMP',
       fetchedAt: new Date(),
       status: 'OK',
       error: ''
@@ -2721,7 +2780,10 @@ function fetchStockPriceFromYahooJapan(symbol, callback) {
 
     callback(null, {
       price: price,
-      priceDate: new Date().toISOString().slice(0, 10)
+      priceDate: getReportDate(),
+      sourceTimestamp: '',
+      sourceTimezone: dateDomains.REPORT_TIME_ZONE,
+      dateBasis: 'FETCH_DATE_ESTIMATE'
     });
   });
 }
@@ -2809,6 +2871,25 @@ function fetchFundPrice(asset, callback) {
     return;
   }
 
+  var reportDate = getReportDate();
+  fetchYahooFundPriceHistory(asset, addDays(reportDate, -14), reportDate, function (historyErr, rows) {
+    if (!historyErr && rows.length) {
+      var latest = rows[rows.length - 1];
+      callback(null, {
+        price: latest.close / 10000,
+        priceDate: latest.priceDate,
+        sourceTimestamp: latest.sourceTimestamp || '',
+        sourceTimezone: latest.sourceTimezone || dateDomains.REPORT_TIME_ZONE,
+        dateBasis: latest.dateBasis || 'PROVIDER_DATE'
+      });
+      return;
+    }
+    fetchFundPriceFromHtml(asset, callback);
+  });
+}
+
+function fetchFundPriceFromHtml(asset, callback) {
+
   fetchText(asset.priceSourceUrl, function (err, html) {
     if (err) {
       callback(err);
@@ -2823,7 +2904,10 @@ function fetchFundPrice(asset, callback) {
 
     callback(null, {
       price: price,
-      priceDate: new Date().toISOString().slice(0, 10)
+      priceDate: getReportDate(),
+      sourceTimestamp: '',
+      sourceTimezone: dateDomains.REPORT_TIME_ZONE,
+      dateBasis: 'FETCH_DATE_ESTIMATE'
     });
   });
 }
@@ -2852,6 +2936,11 @@ function makeLatestPriceHistoryRow(asset, result) {
     close: price,
     volume: null,
     source: isFund ? 'YAHOO_FUND_SNAPSHOT' : isGold ? 'YAHOO_GOLD_SNAPSHOT' : 'YAHOO_CHART_SNAPSHOT',
+    sourceTimestamp: result.sourceTimestamp || '',
+    sourceTimezone: result.sourceTimezone || '',
+    dateBasis: result.dateBasis || '',
+    fxRateDate: result.fxRateDate || '',
+    sessionStatus: 'SNAPSHOT',
     fetchedAt: new Date(),
     status: 'OK',
     error: ''
@@ -2886,6 +2975,8 @@ function refreshAssetPrice(db, asset, options, callback) {
       mmfUpdate.latestFxRate = options.usdJpyRate.rate;
       mmfUpdate.latestFxRatePair = options.usdJpyRate.pair;
       mmfUpdate.latestFxRateDate = options.usdJpyRate.rateDate;
+      mmfUpdate.latestFxRateDateBasis = options.usdJpyRate.dateBasis || '';
+      mmfUpdate.latestFxRateSourceTimezone = options.usdJpyRate.sourceTimezone || '';
     }
     db.collection('assets').updateOne({ symbol: asset.symbol }, {
       $set: mmfUpdate
@@ -2911,10 +3002,18 @@ function refreshAssetPrice(db, asset, options, callback) {
         }
       };
     } else {
+      asset.latestPrice = result.price;
+      asset.latestPriceDate = result.priceDate;
+      asset.latestPriceDateBasis = result.dateBasis || '';
+      asset.latestPriceSourceTimestamp = result.sourceTimestamp || '';
+      asset.latestPriceSourceTimezone = result.sourceTimezone || '';
       update = {
         $set: {
           latestPrice: result.price,
           latestPriceDate: result.priceDate,
+          latestPriceDateBasis: result.dateBasis || '',
+          latestPriceSourceTimestamp: result.sourceTimestamp || '',
+          latestPriceSourceTimezone: result.sourceTimezone || '',
           latestPriceFetchedAt: new Date(),
           priceFetchStatus: 'OK',
           priceFetchError: ''
@@ -2924,6 +3023,11 @@ function refreshAssetPrice(db, asset, options, callback) {
         update.$set.latestFxRate = options.usdJpyRate.rate;
         update.$set.latestFxRatePair = options.usdJpyRate.pair;
         update.$set.latestFxRateDate = options.usdJpyRate.rateDate;
+        update.$set.latestFxRateDateBasis = options.usdJpyRate.dateBasis || '';
+        update.$set.latestFxRateSourceTimezone = options.usdJpyRate.sourceTimezone || '';
+      }
+      if (asset.assetType == 'GOLD' && result.fxRateDate) {
+        update.$set.latestFxRateDate = result.fxRateDate;
       }
     }
 
@@ -3113,7 +3217,7 @@ function startPriceRefreshJob() {
                 }
               });
               var historyStartDatesBySymbol = findOldestBuyDatesBySymbol(docs);
-              var historyToday = todayText();
+              var historyToday = getReportDate();
 
               var assets = Object.keys(assetsBySymbol)
                 .filter(function (symbol) { return activeSymbols[symbol]; })
@@ -3486,6 +3590,7 @@ app.get('/trade-chart', function (req, res) {
           close();
           res.render('trade-chart.ejs', {
             assets: assets,
+            reportDate: getReportDate(),
             chartDataJson: JSON.stringify(assets).replace(/</g, '\\u003c')
           });
           return;
@@ -3518,6 +3623,7 @@ app.get('/trade-chart', function (req, res) {
               attachPriceHistoryToTradeChartData(assets, historyRows);
               res.render('trade-chart.ejs', {
                 assets: assets,
+                reportDate: getReportDate(),
                 chartDataJson: JSON.stringify(assets).replace(/</g, '\\u003c')
               });
             });
@@ -3530,7 +3636,7 @@ app.get('/trade-chart', function (req, res) {
 
 function getDailyReportDate(value) {
   value = String(value || '').trim();
-  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : new Date().toISOString().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : getReportDate();
 }
 
 function findLatestDailyReport(db, callback) {
@@ -3625,6 +3731,7 @@ app.post('/daily-report/generate', function (req, res) {
 
         var doc = {
           reportDate: reportDate,
+          reportTimeZone: dateDomains.REPORT_TIME_ZONE,
           createdAt: new Date().toISOString(),
           model: generated.model,
           responseId: generated.responseId,
@@ -3713,6 +3820,7 @@ app.get('/summary', function (req, res) {
                   fxSummary: fxSummary,
                   combinedTotals: buildCombinedSummaryTotals(report.totals, fxSummary.totals),
                   goldHolding: goldHolding,
+                  reportDate: getReportDate(),
                   refreshStatus: getPriceRefreshStatus(),
                   message: req.query.message || ''
                 });

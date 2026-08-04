@@ -192,10 +192,10 @@
 
     <form class="toolbar" action="/daily-report/generate" method="post">
       <label>
-        Report date
+        Report date (JST)
         <input type="date" name="reportDate" value="<%= snapshot.reportDate %>">
       </label>
-      <button type="submit">Generate today's report</button>
+      <button type="submit">Generate report</button>
       <% if (!hasOpenAiKey) { %>
         <span class="muted">Set OPENAI_API_KEY before generating.</span>
       <% } %>

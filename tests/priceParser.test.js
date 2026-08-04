@@ -408,6 +408,7 @@ assert.strictEqual(goldHistoryRows[1].fxRateDate, '2026-06-12');
 var dailyRates = parseYahooChartDailyRates({
   chart: {
     result: [{
+      meta: { exchangeTimezoneName: 'UTC' },
       timestamp: [1781107200, 1781193600],
       indicators: {
         quote: [{
@@ -429,6 +430,7 @@ assert.strictEqual(dailyRates[1].close, 156.1);
 var dailyPrices = parseYahooChartDailyPriceHistory({
   chart: {
     result: [{
+      meta: { exchangeTimezoneName: 'UTC' },
       timestamp: [1781107200, 1781193600],
       indicators: {
         quote: [{
@@ -448,10 +450,25 @@ assert.strictEqual(dailyPrices[0].currency, 'USD');
 assert.strictEqual(dailyPrices[0].open, 280.1);
 assert.strictEqual(dailyPrices[1].close, 286.1);
 assert.strictEqual(dailyPrices[1].volume, 1200000);
+assert.strictEqual(dailyPrices[0].sourceTimezone, 'UTC');
+assert.strictEqual(dailyPrices[0].dateBasis, 'EXCHANGE_SESSION');
+
+var newYorkDailyPrice = parseYahooChartDailyPriceHistory({
+  chart: {
+    result: [{
+      meta: { exchangeTimezoneName: 'America/New_York' },
+      timestamp: [Date.parse('2026-07-16T00:30:00.000Z') / 1000],
+      indicators: { quote: [{ close: [287.1] }] }
+    }]
+  }
+}, { symbol: 'MCD', assetType: 'US_STOCK' })[0];
+assert.strictEqual(newYorkDailyPrice.priceDate, '2026-07-15');
+assert.strictEqual(newYorkDailyPrice.sourceTimestamp, '2026-07-16T00:30:00.000Z');
 
 var dailyPricesWithNull = parseYahooChartDailyPriceHistory({
   chart: {
     result: [{
+      meta: { exchangeTimezoneName: 'UTC' },
       timestamp: [1781107200, 1781193600],
       indicators: {
         quote: [{
@@ -479,7 +496,7 @@ var latestBuyDates = findLatestBuyDatesBySymbol([
 ]);
 assert.strictEqual(latestBuyDates['7974.T'], '2026-06-10');
 assert.strictEqual(latestBuyDates['ISO.T'], '2026-04-15');
-assert.strictEqual(latestBuyDates.MCD, '2026-06-06');
+assert.strictEqual(latestBuyDates.MCD, '2026-06-07');
 assert.strictEqual(latestBuyDates.BAD, undefined);
 assert.strictEqual(latestBuyDates['FUND:TOPIX'], undefined);
 
@@ -490,7 +507,7 @@ var oldestBuyDates = findOldestBuyDatesBySymbol([
   { assetType: 'US_STOCK', side: 'BUY', symbol: 'MCD', tradeDate: '2026-06-07', quantity: 3 }
 ]);
 assert.strictEqual(oldestBuyDates['7936.T'], '2025-08-26');
-assert.strictEqual(oldestBuyDates.MCD, '2026-06-06');
+assert.strictEqual(oldestBuyDates.MCD, '2026-06-07');
 
 var activeQuantitySymbols = findActiveQuantitySymbols([
   { assetType: 'US_STOCK', side: 'BUY', symbol: 'MCD', tradeDate: '2026-06-07', quantity: 3, settlementCurrency: 'USD' },

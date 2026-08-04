@@ -47,9 +47,14 @@ async function main() {
     if (!historyBySymbol[row.symbol]) {
       historyBySymbol[row.symbol] = [];
     }
+    var doc = parse(row);
+    var isSnapshot = /_SNAPSHOT$/.test(row.source) || row.source == 'FUND_MAPPING' || doc.sessionStatus == 'SNAPSHOT';
+    var isLegacyFundSnapshot = row.source == 'YAHOO_FUND_HISTORY' &&
+      doc.assetType == 'FUND' && !Object.prototype.hasOwnProperty.call(doc, 'netAssetsBalance');
     historyBySymbol[row.symbol].push({
       date: row.price_date,
-      source: row.source
+      source: row.source,
+      completed: !isSnapshot && !isLegacyFundSnapshot
     });
   });
 
@@ -57,11 +62,16 @@ async function main() {
     var asset = parse(row);
     var history = historyBySymbol[row.symbol] || [];
     var dates = Array.from(new Set(history.map(function (item) { return item.date; }))).sort();
+    var completedDates = Array.from(new Set(history.filter(function (item) {
+      return item.completed;
+    }).map(function (item) {
+      return item.date;
+    }))).sort();
     var gaps = [];
-    for (var i = 1; i < dates.length; i++) {
-      var days = dayDifference(dates[i - 1], dates[i]);
+    for (var i = 1; i < completedDates.length; i++) {
+      var days = dayDifference(completedDates[i - 1], completedDates[i]);
       if (days > 7) {
-        gaps.push({ after: dates[i - 1], before: dates[i], days: days });
+        gaps.push({ after: completedDates[i - 1], before: completedDates[i], days: days });
       }
     }
     var sourceCounts = {};
@@ -81,6 +91,9 @@ async function main() {
       historyFirstDate: dates[0] || '',
       historyLastDate: dates[dates.length - 1] || '',
       historyDateCount: dates.length,
+      completedHistoryFirstDate: completedDates[0] || '',
+      completedHistoryLastDate: completedDates[completedDates.length - 1] || '',
+      completedHistoryDateCount: completedDates.length,
       sourceCounts: sourceCounts,
       completedJQuantsStartDate: asset.priceHistoryJQuantsStartDate || '',
       completedJQuantsEndDate: asset.priceHistoryJQuantsEndDate || '',
