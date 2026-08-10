@@ -1,0 +1,17 @@
+{
+  "name": "Node + Git + GitHub CLI + Skills + Codex",
+
+  "image": "mcr.microsoft.com/devcontainers/base:bookworm",
+
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22.20.0"
+    },
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+
+  "postCreateCommand": "npm install --global skills@1.5.22 @openai/codex@latest && node --version && git --version && gh --version && skills --version && codex --version",
+
+  "remoteUser": "vscode"
+}
