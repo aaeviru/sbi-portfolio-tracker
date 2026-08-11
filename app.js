@@ -23,7 +23,7 @@ var buildChineseChatGptReportPrompt = require('./lib/openaiReport').buildChinese
 var buildJapaneseChatGptReportPrompt = require('./lib/openaiReport').buildJapaneseChatGptReportPrompt;
 var app = express();
 
-var PORT = 80;
+var PORT = Number(process.env.PORT || 80);
 var AUTH_COOKIE_NAME = 'sbi_auth';
 var AUTH_PASSWORD = process.env.SBI_AUTH_PASSWORD || 'admin';
 var JWT_SECRET = process.env.SBI_JWT_SECRET || crypto.createHash('sha256').update('local-dev-secret:' + AUTH_PASSWORD).digest('hex');
