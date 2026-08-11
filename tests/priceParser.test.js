@@ -1,5 +1,6 @@
 var assert = require('assert');
 var fs = require('fs');
+process.env.SBI_LOCAL_ONLY = 'true';
 var priceParsers = require('../app');
 var parseSbiCsv = priceParsers.parseSbiCsv;
 var parseSbiDistributionCsv = priceParsers.parseSbiDistributionCsv;

@@ -104,21 +104,24 @@ http://localhost/
 
 ## ログイン
 
-ポートフォリオ画面はシンプルなパスワードログインとHTTP-only JWT cookieで保護されます。
-
-起動前に次の環境変数を設定できます。
+ポートフォリオ画面はシンプルなパスワードログインとHTTP-only JWT cookieで保護されます。通常の起動はフェイルクローズです。12文字以上の認証パスワードと、それとは独立した32文字以上のJWT署名シークレットを設定してください。
 
 ```powershell
-$env:SBI_AUTH_PASSWORD="change-this-password"
-$env:SBI_JWT_SECRET="change-this-long-random-secret"
+$env:SBI_AUTH_PASSWORD = Read-Host "Enter the application password"
+$env:SBI_JWT_SECRET = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
 npm start
 ```
 
-未設定の場合、ローカル開発用のデフォルトパスワードは次です。
+既知のプレースホルダー値は拒否され、2つの値は同一にできません。起動エラーには無効な設定名だけが表示され、値は表示されません。
 
-```text
-admin
+ローカル開発の場合に限り、ローカル専用モードを明示的に有効化できます。
+
+```powershell
+$env:SBI_LOCAL_ONLY="true"
+npm start
 ```
+
+ローカル専用モードは `127.0.0.1` のみにバインドし、パスワード未設定時は `admin`、JWTには独立した開発専用シークレットを使用します。インターネット公開環境では `SBI_LOCAL_ONLY` を有効にしないでください。
 
 ## OpenAI設定（任意）
 
@@ -183,13 +186,13 @@ docker build -t sbi-portfolio-tracker .
 永続化SQLiteデータボリュームとログイン設定を指定して実行：
 
 ```powershell
-docker run --rm -p 8080:80 -v sbi-portfolio-data:/app/data -e SBI_AUTH_PASSWORD=change-this-password -e SBI_JWT_SECRET=change-this-long-random-secret sbi-portfolio-tracker
+docker run --rm -p 8080:80 -v sbi-portfolio-data:/app/data -e SBI_AUTH_PASSWORD -e SBI_JWT_SECRET sbi-portfolio-tracker
 ```
 
 公開済みイメージを実行：
 
 ```powershell
-docker run --rm -p 8080:80 -v sbi-portfolio-data:/app/data -e SBI_AUTH_PASSWORD=change-this-password -e SBI_JWT_SECRET=change-this-long-random-secret iriyano/sbi-portfolio-tracker
+docker run --rm -p 8080:80 -v sbi-portfolio-data:/app/data -e SBI_AUTH_PASSWORD -e SBI_JWT_SECRET iriyano/sbi-portfolio-tracker
 ```
 
 開くURL：

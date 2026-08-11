@@ -18,6 +18,7 @@ var buildDailyReportSnapshot = require('./lib/dailyReport').buildDailyReportSnap
 var dateDomains = require('./lib/dateDomains');
 var historyCoverage = require('./lib/historyCoverage');
 var generateDailyReport = require('./lib/openaiReport').generateDailyReport;
+var loadAuthConfig = require('./lib/authConfig').loadAuthConfig;
 var buildChatGptReportPrompt = require('./lib/openaiReport').buildChatGptReportPrompt;
 var buildChineseChatGptReportPrompt = require('./lib/openaiReport').buildChineseChatGptReportPrompt;
 var buildJapaneseChatGptReportPrompt = require('./lib/openaiReport').buildJapaneseChatGptReportPrompt;
@@ -25,8 +26,9 @@ var app = express();
 
 var PORT = Number(process.env.PORT || 80);
 var AUTH_COOKIE_NAME = 'sbi_auth';
-var AUTH_PASSWORD = process.env.SBI_AUTH_PASSWORD || 'admin';
-var JWT_SECRET = process.env.SBI_JWT_SECRET || crypto.createHash('sha256').update('local-dev-secret:' + AUTH_PASSWORD).digest('hex');
+var authConfig = loadAuthConfig(process.env);
+var AUTH_PASSWORD = authConfig.password;
+var JWT_SECRET = authConfig.jwtSecret;
 var JWT_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 var priceRefreshJob = {
   status: 'IDLE',
@@ -4380,7 +4382,7 @@ app.post('/prices/:symbol/refresh', function (req, res) {
 var https = require('https');
 
 if (require.main === module) {
-  app.listen(PORT, function () {
-    console.log('Server is running on PORT:', PORT);
+  app.listen(PORT, authConfig.host, function () {
+    console.log('Server is running on ' + authConfig.host + ', PORT:', PORT);
   });
 }

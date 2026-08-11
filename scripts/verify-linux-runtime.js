@@ -34,7 +34,7 @@ function verifyApplicationStarts(databasePath) {
     var settled = false;
     var child = childProcess.spawn(process.execPath, ['app.js'], {
       cwd: path.join(__dirname, '..'),
-      env: Object.assign({}, process.env, { PORT: '0', SBI_PORTFOLIO_DB_PATH: databasePath }),
+      env: Object.assign({}, process.env, { PORT: '0', SBI_LOCAL_ONLY: 'true', SBI_PORTFOLIO_DB_PATH: databasePath }),
       stdio: ['ignore', 'pipe', 'pipe']
     });
 

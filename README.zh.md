@@ -104,21 +104,24 @@ http://localhost/
 
 ## 登录
 
-应用使用简单密码登录，并通过 HTTP-only JWT cookie 保护投资组合页面。
-
-运行前可以设置这些环境变量：
+应用使用简单密码登录，并通过 HTTP-only JWT cookie 保护投资组合页面。普通启动采用失败关闭策略：运行前必须设置至少 12 个字符的认证密码，以及一个独立且至少 32 个字符的 JWT 签名密钥。
 
 ```powershell
-$env:SBI_AUTH_PASSWORD="change-this-password"
-$env:SBI_JWT_SECRET="change-this-long-random-secret"
+$env:SBI_AUTH_PASSWORD = Read-Host "Enter the application password"
+$env:SBI_JWT_SECRET = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
 npm start
 ```
 
-如果未设置，本地开发默认密码是：
+已知占位值会被拒绝，并且两个值不能相同。启动错误只显示无效的设置名称，不会显示设置值。
 
-```text
-admin
+仅在本地开发时，可以显式启用本地专用模式：
+
+```powershell
+$env:SBI_LOCAL_ONLY="true"
+npm start
 ```
+
+本地专用模式只绑定 `127.0.0.1`；未提供密码时使用 `admin`，JWT 使用独立的开发专用密钥。面向互联网的部署绝不能启用 `SBI_LOCAL_ONLY`。
 
 ## OpenAI 设置（可选）
 
@@ -183,13 +186,13 @@ docker build -t sbi-portfolio-tracker .
 使用持久化 SQLite 数据卷和登录设置运行：
 
 ```powershell
-docker run --rm -p 8080:80 -v sbi-portfolio-data:/app/data -e SBI_AUTH_PASSWORD=change-this-password -e SBI_JWT_SECRET=change-this-long-random-secret sbi-portfolio-tracker
+docker run --rm -p 8080:80 -v sbi-portfolio-data:/app/data -e SBI_AUTH_PASSWORD -e SBI_JWT_SECRET sbi-portfolio-tracker
 ```
 
 或者运行已发布镜像：
 
 ```powershell
-docker run --rm -p 8080:80 -v sbi-portfolio-data:/app/data -e SBI_AUTH_PASSWORD=change-this-password -e SBI_JWT_SECRET=change-this-long-random-secret iriyano/sbi-portfolio-tracker
+docker run --rm -p 8080:80 -v sbi-portfolio-data:/app/data -e SBI_AUTH_PASSWORD -e SBI_JWT_SECRET iriyano/sbi-portfolio-tracker
 ```
 
 打开：

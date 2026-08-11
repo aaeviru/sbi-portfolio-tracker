@@ -104,21 +104,24 @@ http://localhost/
 
 ## Login
 
-The app protects portfolio pages with a simple password login and an HTTP-only JWT cookie.
-
-Set these environment variables before running the app:
+The app protects portfolio pages with a simple password login and an HTTP-only JWT cookie. Normal startup is fail-closed: set an authentication password of at least 12 characters and an independent JWT signing secret of at least 32 characters before running the app:
 
 ```powershell
-$env:SBI_AUTH_PASSWORD="change-this-password"
-$env:SBI_JWT_SECRET="change-this-long-random-secret"
+$env:SBI_AUTH_PASSWORD = Read-Host "Enter the application password"
+$env:SBI_JWT_SECRET = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
 npm start
 ```
 
-If they are not set, the local development password defaults to:
+Known placeholder values are rejected, and the two values must differ. Startup errors name the invalid setting without printing its value.
 
-```text
-admin
+For local development only, explicitly enable the local-only posture:
+
+```powershell
+$env:SBI_LOCAL_ONLY="true"
+npm start
 ```
+
+Local-only mode binds to `127.0.0.1`, uses `admin` when no password is supplied, and uses a separate development-only JWT secret. Never enable `SBI_LOCAL_ONLY` for an internet-facing deployment.
 
 ## Optional OpenAI Setup
 
@@ -183,13 +186,13 @@ docker build -t sbi-portfolio-tracker .
 Run it with a persistent SQLite data volume and login settings:
 
 ```powershell
-docker run --rm -p 8080:80 -v sbi-portfolio-data:/app/data -e SBI_AUTH_PASSWORD=change-this-password -e SBI_JWT_SECRET=change-this-long-random-secret sbi-portfolio-tracker
+docker run --rm -p 8080:80 -v sbi-portfolio-data:/app/data -e SBI_AUTH_PASSWORD -e SBI_JWT_SECRET sbi-portfolio-tracker
 ```
 
 Or run the published image:
 
 ```powershell
-docker run --rm -p 8080:80 -v sbi-portfolio-data:/app/data -e SBI_AUTH_PASSWORD=change-this-password -e SBI_JWT_SECRET=change-this-long-random-secret iriyano/sbi-portfolio-tracker
+docker run --rm -p 8080:80 -v sbi-portfolio-data:/app/data -e SBI_AUTH_PASSWORD -e SBI_JWT_SECRET iriyano/sbi-portfolio-tracker
 ```
 
 Open:
