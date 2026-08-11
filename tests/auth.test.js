@@ -2,20 +2,26 @@ var assert = require('assert');
 var childProcess = require('child_process');
 var path = require('path');
 
-process.env.SBI_LOCAL_ONLY = 'true';
 var app = require('../app');
+var applicationCwd = path.join(__dirname, '..');
+var applicationArgs = ['app.js'];
 
-function productionStartup(env) {
+function applicationEnvironment(env) {
   var childEnv = Object.assign({}, process.env);
   delete childEnv.SBI_LOCAL_ONLY;
   delete childEnv.SBI_AUTH_PASSWORD;
   delete childEnv.SBI_JWT_SECRET;
   Object.assign(childEnv, env || {});
-  childEnv.NODE_ENV = childEnv.NODE_ENV || 'production';
   childEnv.PORT = '0';
+  return childEnv;
+}
 
-  return childProcess.spawnSync(process.execPath, ['app.js'], {
-    cwd: path.join(__dirname, '..'),
+function productionStartup(env) {
+  var childEnv = applicationEnvironment(env);
+  childEnv.NODE_ENV = childEnv.NODE_ENV || 'production';
+
+  return childProcess.spawnSync(process.execPath, applicationArgs, {
+    cwd: applicationCwd,
     env: childEnv,
     encoding: 'utf8',
     timeout: 10000
@@ -26,9 +32,9 @@ function acceptedStartup(env) {
   return new Promise(function (resolve, reject) {
     var output = '';
     var settled = false;
-    var childEnv = Object.assign({}, process.env, env, { PORT: '0' });
-    var child = childProcess.spawn(process.execPath, ['app.js'], {
-      cwd: path.join(__dirname, '..'),
+    var childEnv = applicationEnvironment(env);
+    var child = childProcess.spawn(process.execPath, applicationArgs, {
+      cwd: applicationCwd,
       env: childEnv,
       stdio: ['ignore', 'pipe', 'pipe']
     });
@@ -61,6 +67,15 @@ function acceptedStartup(env) {
 var missingCredentials = productionStartup();
 assert.notStrictEqual(missingCredentials.status, 0);
 assert.match(missingCredentials.stderr, /SBI_AUTH_PASSWORD is required/);
+
+var credentialFreeImport = childProcess.spawnSync(process.execPath, ['-e', "require('./app'); process.stdout.write('imported')"], {
+  cwd: applicationCwd,
+  env: applicationEnvironment(),
+  encoding: 'utf8',
+  timeout: 10000
+});
+assert.strictEqual(credentialFreeImport.status, 0);
+assert.strictEqual(credentialFreeImport.stdout, 'imported');
 
 var implicitDevelopment = productionStartup({ NODE_ENV: 'development' });
 assert.notStrictEqual(implicitDevelopment.status, 0);

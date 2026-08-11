@@ -26,9 +26,7 @@ var app = express();
 
 var PORT = Number(process.env.PORT || 80);
 var AUTH_COOKIE_NAME = 'sbi_auth';
-var authConfig = loadAuthConfig(process.env);
-var AUTH_PASSWORD = authConfig.password;
-var JWT_SECRET = authConfig.jwtSecret;
+var authConfig = null;
 var JWT_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 var priceRefreshJob = {
   status: 'IDLE',
@@ -56,6 +54,13 @@ app.use(
 )
 
 app.use(bodyParser.json())
+
+function getAuthConfig() {
+  if (!authConfig) {
+    authConfig = loadAuthConfig(process.env);
+  }
+  return authConfig;
+}
 
 function base64UrlEncode(value) {
   return Buffer.from(value).toString('base64')
@@ -135,7 +140,7 @@ function makeAuthToken() {
     sub: 'sbi-local-user',
     iat: now,
     exp: now + JWT_MAX_AGE_SECONDS
-  }, JWT_SECRET);
+  }, getAuthConfig().jwtSecret);
 }
 
 function normalizeNextPath(value) {
@@ -148,7 +153,7 @@ function normalizeNextPath(value) {
 
 function isAuthenticated(req) {
   var cookies = parseCookies(req.headers.cookie);
-  return !!verifyJwt(cookies[AUTH_COOKIE_NAME], JWT_SECRET);
+  return !!verifyJwt(cookies[AUTH_COOKIE_NAME], getAuthConfig().jwtSecret);
 }
 
 function authMiddleware(req, res, next) {
@@ -181,7 +186,7 @@ app.get('/login', function (req, res) {
 app.post('/login', function (req, res) {
   var password = cleanCsvValue(req.body.password);
   var nextPath = normalizeNextPath(req.body.next);
-  var expected = Buffer.from(AUTH_PASSWORD);
+  var expected = Buffer.from(getAuthConfig().password);
   var actual = Buffer.from(password);
   var ok = expected.length == actual.length && crypto.timingSafeEqual(expected, actual);
   if (!ok) {
@@ -4382,7 +4387,8 @@ app.post('/prices/:symbol/refresh', function (req, res) {
 var https = require('https');
 
 if (require.main === module) {
-  app.listen(PORT, authConfig.host, function () {
-    console.log('Server is running on ' + authConfig.host + ', PORT:', PORT);
+  var startupAuthConfig = getAuthConfig();
+  app.listen(PORT, startupAuthConfig.host, function () {
+    console.log('Server is running on ' + startupAuthConfig.host + ', PORT:', PORT);
   });
 }

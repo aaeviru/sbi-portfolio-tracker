@@ -4,7 +4,6 @@ var os = require('os');
 var path = require('path');
 
 var tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sbi-portfolio-sqlite-'));
-process.env.SBI_LOCAL_ONLY = 'true';
 process.env.SBI_PORTFOLIO_DB_PATH = path.join(tmpDir, 'test.sqlite');
 
 var withDb = require('../lib/db').withDb;
