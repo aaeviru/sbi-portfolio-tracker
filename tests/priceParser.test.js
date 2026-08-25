@@ -29,6 +29,7 @@ var getNextPriceHistorySourceWindow = priceParsers.getNextPriceHistorySourceWind
 var makeLatestPriceHistoryRow = priceParsers.makeLatestPriceHistoryRow;
 var makeFundPriceHistoryRow = priceParsers.makeFundPriceHistoryRow;
 var parseYahooFundPriceHistory = priceParsers.parseYahooFundPriceHistory;
+var parseYahooFundPage = priceParsers.parseYahooFundPage;
 var parseYahooChartDailyRates = priceParsers.parseYahooChartDailyRates;
 var parseYahooChartDailyPriceHistory = priceParsers.parseYahooChartDailyPriceHistory;
 var parseJQuantsDailyPriceHistory = priceParsers.parseJQuantsDailyPriceHistory;
@@ -51,6 +52,20 @@ var html = [
 assert.strictEqual(
   parseFundPriceFromHtml(html, 'https://finance.yahoo.co.jp/quote/01313098'),
   35.8534
+);
+
+var escapedFundPage = [
+  '<div>投資信託</div><div>01313098</div><div>319,451</div><div>前日比 -7,675</div>',
+  '<script>self.__next_f.push([1,"{\\"priceBoard\\":{\\"value\\":\\"319,451\\",\\"updateDate\\":\\"8/25\\"},\\"jwtToken\\":\\"synthetic.header.signature\\"}"])</script>'
+].join('');
+assert.deepStrictEqual(
+  parseYahooFundPage(escapedFundPage, 'https://finance.yahoo.co.jp/quote/01313098', '2026-08-26'),
+  {
+    token: 'synthetic.header.signature',
+    price: 31.9451,
+    priceDate: '2026-08-25',
+    dateBasis: 'PROVIDER_DATE'
+  }
 );
 
 var fundHistoryRow = makeFundPriceHistoryRow(
@@ -110,6 +125,14 @@ assert.strictEqual(isPriceHistoryBoundsRow({ assetType: 'FUND', source: 'YAHOO_F
 assert.strictEqual(getHistoryEndLimitDate({ assetType: 'GOLD' }, '2026-06-18'), '2026-06-17');
 assert.strictEqual(getHistoryEndLimitDate({ assetType: 'STOCK' }, '2026-06-18'), '2026-06-17');
 assert.strictEqual(getHistoryEndLimitDate({ assetType: 'STOCK' }, '2026-06-22'), '2026-06-19');
+assert.strictEqual(
+  getHistoryEndLimitDate({
+    assetType: 'FUND',
+    latestPriceDate: '2026-08-26',
+    latestPriceDateBasis: 'FETCH_DATE_ESTIMATE'
+  }, new Date('2026-08-25T15:41:00.000Z')),
+  '2026-08-25'
+);
 assert.strictEqual(getPriceHistoryTargetStartDate('2026-01-15', '2026-06-18'), '2024-06-18');
 assert.strictEqual(getPriceHistoryTargetStartDate('2023-01-15', '2026-06-18'), '2023-01-15');
 assert.strictEqual(getPriceHistoryTargetStartDate('', '2026-06-18'), '2024-06-18');

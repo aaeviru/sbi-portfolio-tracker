@@ -16,6 +16,7 @@ var sortTradeChartAssetsBySummaryRows = require('./lib/tradeChart').sortTradeCha
 var withDb = require('./lib/db').withDb;
 var buildDailyReportSnapshot = require('./lib/dailyReport').buildDailyReportSnapshot;
 var dateDomains = require('./lib/dateDomains');
+var marketCalendars = require('./lib/marketCalendars');
 var historyCoverage = require('./lib/historyCoverage');
 var generateDailyReport = require('./lib/openaiReport').generateDailyReport;
 var loadAuthConfig = require('./lib/authConfig').loadAuthConfig;
@@ -2127,8 +2128,37 @@ function isPriceHistoryBoundsRow(row, asset) {
   return true;
 }
 
+function getConservativeFundHistoryEndDate(asset, reportDate) {
+  var date = marketCalendars.addDays(reportDate, -1);
+  while (date && !marketCalendars.isExpectedSession(asset, 'YAHOO_FUND_HISTORY', date)) {
+    date = marketCalendars.addDays(date, -1);
+  }
+  return date;
+}
+
 function getHistoryEndLimitDate(asset, now, yahooMeta) {
+  if (asset && asset.assetType == 'FUND' && asset.latestPriceDateBasis == 'FETCH_DATE_ESTIMATE') {
+    var conservativeDate = getConservativeFundHistoryEndDate(asset, getReportDate(now));
+    if (conservativeDate) {
+      return conservativeDate;
+    }
+  }
   return dateDomains.getLatestCompletedMarketDate(asset, now, yahooMeta);
+}
+
+function getFundPublicationPendingCount(asset, reportDate, historyEndLimit) {
+  if (!asset || asset.assetType != 'FUND' ||
+    !isValidDateText(reportDate) || !isValidDateText(historyEndLimit) ||
+    historyEndLimit >= reportDate) {
+    return 0;
+  }
+
+  return marketCalendars.getExpectedDates(
+    asset,
+    'YAHOO_FUND_HISTORY',
+    marketCalendars.addDays(historyEndLimit, 1),
+    reportDate
+  ).length;
 }
 
 function getPriceHistoryTargetStartDate(firstBuyDate, today) {
@@ -2415,7 +2445,7 @@ function parseYahooFundPriceHistory(json, asset) {
   return histories.map(function (row) {
     var priceDate = parseJapaneseDateText(row.date);
     var price = parseFundHistoryNumber(row.price);
-    if (!priceDate || !isFinite(price)) {
+    if (!priceDate || typeof price != 'number' || !isFinite(price)) {
       return null;
     }
     return {
@@ -2445,73 +2475,130 @@ function getFundCodeFromSourceUrl(sourceUrl) {
   return match ? decodeURIComponent(match[1]) : '';
 }
 
-function fetchYahooFundJwtToken(fundCode, callback) {
-  var url = 'https://finance.yahoo.co.jp/quote/' + encodeURIComponent(fundCode) + '/chart';
-  fetchText(url, function (err, html) {
-    if (err) {
-      callback(err);
-      return;
-    }
-
-    var match = html.match(/"jwtToken":"([^"]+)"/);
-    if (!match) {
-      callback(new Error('Yahoo fund token not found'));
-      return;
-    }
-    callback(null, match[1]);
-  });
-}
-
-function fetchYahooFundPriceHistory(asset, startDate, endDate, callback) {
-  var fundCode = getFundCodeFromSourceUrl(asset.priceSourceUrl);
-  if (!fundCode) {
-    callback(new Error('Mapping required'));
-    return;
-  }
-
-  fetchYahooFundJwtToken(fundCode, function (tokenErr, token) {
-    if (tokenErr) {
-      callback(tokenErr);
-      return;
-    }
-
-    var rows = [];
-
-    function fetchPage(page) {
-      var path = '/bff-pc/v1/main/fund/price/history/' + encodeURIComponent(fundCode) +
-        '?fromDate=' + formatYahooBffDate(startDate) +
-        '&toDate=' + formatYahooBffDate(endDate) +
-        '&timeFrame=daily&page=' + page + '&size=100&displayedMaxPage=5';
+function makeYahooFundHttpAdapter() {
+  return {
+    fetchFundPage: function (fundCode, callback) {
+      var url = 'https://finance.yahoo.co.jp/quote/' + encodeURIComponent(fundCode) + '/chart';
+      fetchText(url, callback);
+    },
+    fetchFundHistoryPage: function (request, callback) {
+      var path = '/bff-pc/v1/main/fund/price/history/' + encodeURIComponent(request.fundCode) +
+        '?fromDate=' + formatYahooBffDate(request.startDate) +
+        '&toDate=' + formatYahooBffDate(request.endDate) +
+        '&timeFrame=daily&page=' + request.page + '&size=100&displayedMaxPage=5';
       var url = 'https://finance.yahoo.co.jp' + path;
 
       fetchTextWithHeaders(url, {
         'User-Agent': 'Mozilla/5.0 iriyano-price-fetcher',
         'Accept': 'application/json',
-        'Referer': 'https://finance.yahoo.co.jp/quote/' + encodeURIComponent(fundCode) + '/chart',
-        'jwt-token': token
-      }, function (fetchErr, data) {
-        if (fetchErr) {
-          callback(fetchErr);
-          return;
-        }
+        'Referer': 'https://finance.yahoo.co.jp/quote/' + encodeURIComponent(request.fundCode) + '/chart',
+        'jwt-token': request.token
+      }, callback);
+    }
+  };
+}
 
-        try {
-          var json = JSON.parse(data);
-          rows = rows.concat(parseYahooFundPriceHistory(json, asset));
-          if (json.paging && json.paging.hasNext && page < Number(json.paging.totalPage || page + 1)) {
-            fetchPage(page + 1);
-            return;
-          }
-          rows.sort(function (a, b) { return a.priceDate.localeCompare(b.priceDate); });
-          callback(null, rows);
-        } catch (parseErr) {
-          callback(parseErr);
-        }
-      });
+function createYahooFundProvider(adapter) {
+  adapter = adapter || makeYahooFundHttpAdapter();
+
+  function fetchPriceHistory(asset, startDate, endDate, callback) {
+    var fundCode = getFundCodeFromSourceUrl(asset.priceSourceUrl);
+    if (!fundCode) {
+      callback(new Error('Mapping required'));
+      return;
     }
 
-    fetchPage(1);
-  });
+    adapter.fetchFundPage(fundCode, function (pageErr, html) {
+      if (pageErr) {
+        callback(pageErr);
+        return;
+      }
+      var pageData = parseYahooFundPage(html, asset.priceSourceUrl, getReportDate());
+      if (!pageData.token) {
+        callback(new Error('Yahoo fund token not found'));
+        return;
+      }
+
+      var rows = [];
+
+      function fetchPage(page) {
+        adapter.fetchFundHistoryPage({
+          fundCode: fundCode,
+          startDate: startDate,
+          endDate: endDate,
+          page: page,
+          token: pageData.token
+        }, function (fetchErr, data) {
+          if (fetchErr) {
+            callback(fetchErr);
+            return;
+          }
+
+          try {
+            var json = JSON.parse(data);
+            if (!json || !Array.isArray(json.histories)) {
+              throw new Error('Invalid Yahoo fund history response');
+            }
+            var pageRows = parseYahooFundPriceHistory(json, asset);
+            if (pageRows.length != json.histories.length) {
+              throw new Error('Invalid Yahoo fund history response');
+            }
+            rows = rows.concat(pageRows);
+            if (json.paging && json.paging.hasNext && page < Number(json.paging.totalPage || page + 1)) {
+              fetchPage(page + 1);
+              return;
+            }
+            rows.sort(function (a, b) { return a.priceDate.localeCompare(b.priceDate); });
+            callback(null, rows);
+          } catch (parseErr) {
+            callback(parseErr);
+          }
+        });
+      }
+
+      fetchPage(1);
+    });
+  }
+
+  function fetchPagePrice(asset, reportDate, callback) {
+    var fundCode = getFundCodeFromSourceUrl(asset.priceSourceUrl);
+    if (!fundCode) {
+      callback(new Error('Mapping required'));
+      return;
+    }
+
+    adapter.fetchFundPage(fundCode, function (err, html) {
+      if (err) {
+        callback(err);
+        return;
+      }
+
+      var pageData = parseYahooFundPage(html, asset.priceSourceUrl, reportDate);
+      if (typeof pageData.price != 'number' || !isFinite(pageData.price)) {
+        callback(new Error('Fund price not found'));
+        return;
+      }
+
+      callback(null, {
+        price: pageData.price,
+        priceDate: pageData.priceDate,
+        sourceTimestamp: '',
+        sourceTimezone: dateDomains.REPORT_TIME_ZONE,
+        dateBasis: pageData.dateBasis
+      });
+    });
+  }
+
+  return {
+    fetchPriceHistory: fetchPriceHistory,
+    fetchPagePrice: fetchPagePrice
+  };
+}
+
+var yahooFundProvider = createYahooFundProvider();
+
+function fetchYahooFundPriceHistory(asset, startDate, endDate, callback) {
+  yahooFundProvider.fetchPriceHistory(asset, startDate, endDate, callback);
 }
 
 function updateAssetPriceHistoryStatus(db, asset, fields, callback) {
@@ -2592,12 +2679,17 @@ function bootstrapAssetPriceHistoryCoverage(db, asset, sourceRanges, state, call
   next();
 }
 
-function getHistoryFetcher(asset, historySource) {
+function getHistoryFetcher(asset, historySource, options) {
   if (historySource == 'JQUANTS') {
     return fetchJQuantsDailyPriceHistory;
   }
   if (asset.assetType == 'GOLD') {
     return fetchGoldDailyPriceHistory;
+  }
+  if (asset.assetType == 'FUND' && options && options.yahooFundProvider) {
+    return function (fundAsset, startDate, endDate, callback) {
+      options.yahooFundProvider.fetchPriceHistory(fundAsset, startDate, endDate, callback);
+    };
   }
   if (asset.assetType == 'FUND') {
     return fetchYahooFundPriceHistory;
@@ -2631,9 +2723,10 @@ function refreshAssetPriceHistory(db, asset, options, callback) {
     return;
   }
 
-  var now = new Date();
+  var now = options.now ? new Date(options.now) : new Date();
   var reportDate = getReportDate(now);
   var historyEndLimit = getHistoryEndLimitDate(asset, now);
+  var publicationPendingCount = getFundPublicationPendingCount(asset, reportDate, historyEndLimit);
   var targetStartDate = getPriceHistoryTargetStartDate(asset.priceHistoryStartDate, reportDate);
   var sourceRanges = getPriceHistorySourceRanges(asset, reportDate, targetStartDate, historyEndLimit);
   var budget = options.budget || {
@@ -2658,6 +2751,7 @@ function refreshAssetPriceHistory(db, asset, options, callback) {
     });
 
     function finish(status, error, pendingCount, deferredCount, stop) {
+      var totalPendingCount = Number(pendingCount || 0) + Number(deferredCount || 0) + publicationPendingCount;
       var completedDates = state.rows.filter(function (row) {
         return isPriceHistoryBoundsRow(row, asset);
       }).map(function (row) { return row.priceDate; }).sort();
@@ -2666,7 +2760,7 @@ function refreshAssetPriceHistory(db, asset, options, callback) {
         priceHistoryFetchStatus: status,
         priceHistoryFetchError: error || '',
         priceHistoryLatestDate: completedDates[completedDates.length - 1] || '',
-        priceHistoryPendingSessions: Number(pendingCount || 0) + Number(deferredCount || 0)
+        priceHistoryPendingSessions: totalPendingCount
       }, function (statusErr) {
         callback(statusErr, {
           ok: !statusErr && status != 'ERROR' && status != 'RATE_LIMITED',
@@ -2679,7 +2773,7 @@ function refreshAssetPriceHistory(db, asset, options, callback) {
           historyRows: inserted + updated,
           historyInserted: inserted,
           historyUpdated: updated,
-          pendingSessions: Number(pendingCount || 0) + Number(deferredCount || 0)
+          pendingSessions: totalPendingCount
         });
       });
     }
@@ -2690,22 +2784,27 @@ function refreshAssetPriceHistory(db, asset, options, callback) {
         sourceRanges: sourceRanges,
         rows: state.rows,
         intervals: state.intervals,
-        nowText: budget.forceRetry ? '9999-12-31T23:59:59.999Z' : new Date().toISOString()
+        nowText: budget.forceRetry ? '9999-12-31T23:59:59.999Z' : now.toISOString()
       });
       var deferredCount = Number(windows.deferredCount || 0);
 
       if (!windows.length) {
-        finish(deferredCount ? 'RETRY_SCHEDULED' : 'UP_TO_DATE', '', 0, deferredCount, false);
+        var status = deferredCount
+          ? 'RETRY_SCHEDULED'
+          : publicationPendingCount
+            ? 'PENDING_PUBLICATION'
+            : 'UP_TO_DATE';
+        finish(status, '', 0, deferredCount, false);
         return;
       }
-      if (budget.remaining <= 0 || Date.now() >= budget.deadline) {
+      if (budget.remaining <= 0 || (options.now ? now.getTime() : Date.now()) >= budget.deadline) {
         var pendingCount = windows.reduce(function (sum, window) { return sum + window.expectedCount; }, 0);
         finish('PARTIAL', '', pendingCount, deferredCount, false);
         return;
       }
 
       var window = windows[0];
-      var historyFetcher = getHistoryFetcher(asset, window.source);
+      var historyFetcher = getHistoryFetcher(asset, window.source, options);
       budget.remaining--;
       budget.requests = Number(budget.requests || 0) + 1;
       requestCount++;
@@ -2721,7 +2820,7 @@ function refreshAssetPriceHistory(db, asset, options, callback) {
             rows: fetchErr ? [] : rows,
             allRows: state.rows.concat(fetchErr ? [] : rows),
             intervals: state.intervals,
-            now: new Date(),
+            now: now,
             error: fetchErr ? fetchErr.message : '',
             rateLimited: rateLimited
           });
@@ -2947,6 +3046,44 @@ function parseFundPriceFromHtml(html, sourceUrl) {
   return pricePer10000 / 10000;
 }
 
+function resolveYahooFundUpdateDate(monthDay, reportDate) {
+  var match = String(monthDay || '').match(/^(\d{1,2})\/(\d{1,2})$/);
+  if (!match || !isValidDateText(reportDate)) {
+    return '';
+  }
+
+  var year = Number(reportDate.slice(0, 4));
+  var candidate = year + '-' + ('0' + match[1]).slice(-2) + '-' + ('0' + match[2]).slice(-2);
+  if (!isValidDateText(candidate)) {
+    return '';
+  }
+  if (candidate > reportDate) {
+    candidate = (year - 1) + candidate.slice(4);
+  }
+  return candidate;
+}
+
+function parseYahooFundPage(html, sourceUrl, reportDate) {
+  html = String(html || '');
+  reportDate = reportDate || getReportDate();
+  var tokenMatch = html.match(/\\?"jwtToken\\?"\s*:\s*\\?"([^"\\]+)\\?"/);
+  var updateDateMatch = html.match(
+    /\\?"priceBoard\\?"\s*:\s*\{[\s\S]{0,500}?\\?"updateDate\\?"\s*:\s*\\?"(\d{1,2}\/\d{1,2})\\?"/
+  );
+  var token = tokenMatch ? tokenMatch[1] : '';
+  if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) {
+    token = '';
+  }
+  var priceDate = resolveYahooFundUpdateDate(updateDateMatch && updateDateMatch[1], reportDate);
+
+  return {
+    token: token,
+    price: parseFundPriceFromHtml(html, sourceUrl),
+    priceDate: priceDate || reportDate,
+    dateBasis: priceDate ? 'PROVIDER_DATE' : 'FETCH_DATE_ESTIMATE'
+  };
+}
+
 module.exports = {
   appVersion: APP_VERSION,
   signJwt: signJwt,
@@ -2964,6 +3101,7 @@ module.exports = {
   buildCombinedSummaryTotals: buildCombinedSummaryTotals,
   calculateGoldPricePerGramJpy: calculateGoldPricePerGramJpy,
   buildGoldPriceHistoryRows: buildGoldPriceHistoryRows,
+  buildPriceUpdateRows: buildPriceUpdateRows,
   getGoldHoldingStartDate: getGoldHoldingStartDate,
   findLatestBuyDatesBySymbol: findLatestBuyDatesBySymbol,
   findOldestBuyDatesBySymbol: findOldestBuyDatesBySymbol,
@@ -2979,28 +3117,50 @@ module.exports = {
   getNextPriceHistoryWindow: getNextPriceHistoryWindow,
   getNextPriceHistorySourceWindow: getNextPriceHistorySourceWindow,
   upsertPriceHistoryRows: upsertPriceHistoryRows,
+  refreshAssetPrice: refreshAssetPrice,
+  refreshAssetPriceHistory: refreshAssetPriceHistory,
   makeLatestPriceHistoryRow: makeLatestPriceHistoryRow,
   makeFundPriceHistoryRow: makeFundPriceHistoryRow,
   parseYahooFundPriceHistory: parseYahooFundPriceHistory,
+  createYahooFundProvider: createYahooFundProvider,
+  parseYahooFundPage: parseYahooFundPage,
   parseYahooChartDailyRates: parseYahooChartDailyRates,
   parseYahooChartDailyPriceHistory: parseYahooChartDailyPriceHistory,
   parseJQuantsDailyPriceHistory: parseJQuantsDailyPriceHistory,
   fetchYahooChartDailyPriceHistory: fetchYahooChartDailyPriceHistory,
   fetchYahooFundPriceHistory: fetchYahooFundPriceHistory,
   fetchGoldDailyPriceHistory: fetchGoldDailyPriceHistory,
+  countFailedAssetRefreshes: countFailedAssetRefreshes,
   parseFundPriceFromHtml: parseFundPriceFromHtml,
   parseStockPriceFromHtml: parseStockPriceFromHtml
 };
 
-function fetchFundPrice(asset, callback) {
+function fetchFundPrice(asset, options, callback) {
+  if (typeof options == 'function') {
+    callback = options;
+    options = {};
+  }
+  options = options || {};
   if (!asset.priceSourceUrl) {
     callback(new Error('Mapping required'));
     return;
   }
 
-  var reportDate = getReportDate();
-  fetchYahooFundPriceHistory(asset, addDays(reportDate, -14), reportDate, function (historyErr, rows) {
-    if (!historyErr && rows.length) {
+  var provider = options.yahooFundProvider || yahooFundProvider;
+  var reportDate = getReportDate(options.now);
+  provider.fetchPagePrice(asset, reportDate, function (pageErr, result) {
+    if (!pageErr) {
+      callback(null, result);
+      return;
+    }
+
+    var historyEndDate = getConservativeFundHistoryEndDate(asset, reportDate);
+    provider.fetchPriceHistory(asset, addDays(historyEndDate, -14), historyEndDate, function (historyErr, rows) {
+      if (historyErr || !rows || !rows.length) {
+        callback(historyErr || pageErr);
+        return;
+      }
+
       var latest = rows[rows.length - 1];
       callback(null, {
         price: latest.close / 10000,
@@ -3009,32 +3169,6 @@ function fetchFundPrice(asset, callback) {
         sourceTimezone: latest.sourceTimezone || dateDomains.REPORT_TIME_ZONE,
         dateBasis: latest.dateBasis || 'PROVIDER_DATE'
       });
-      return;
-    }
-    fetchFundPriceFromHtml(asset, callback);
-  });
-}
-
-function fetchFundPriceFromHtml(asset, callback) {
-
-  fetchText(asset.priceSourceUrl, function (err, html) {
-    if (err) {
-      callback(err);
-      return;
-    }
-
-    var price = parseFundPriceFromHtml(html, asset.priceSourceUrl);
-    if (!isFinite(price)) {
-      callback(new Error('Fund price not found'));
-      return;
-    }
-
-    callback(null, {
-      price: price,
-      priceDate: getReportDate(),
-      sourceTimestamp: '',
-      sourceTimezone: dateDomains.REPORT_TIME_ZONE,
-      dateBasis: 'FETCH_DATE_ESTIMATE'
     });
   });
 }
@@ -3113,10 +3247,8 @@ function refreshAssetPrice(db, asset, options, callback) {
     return;
   }
 
-  var isStock = asset.assetType == 'STOCK' || asset.assetType == 'US_STOCK';
   var isGold = asset.assetType == 'GOLD';
-  var fetcher = isGold ? fetchGoldPrice : isStock ? fetchStockPrice : fetchFundPrice;
-  var fetchArg = isGold ? null : isStock ? asset.symbol : asset;
+  var isFund = asset.assetType == 'FUND';
   var done = function (err, result) {
     var update;
 
@@ -3183,10 +3315,12 @@ function refreshAssetPrice(db, asset, options, callback) {
     });
   };
 
-  if (isGold) {
-    fetcher(done);
+  if (isFund) {
+    fetchFundPrice(asset, options, done);
+  } else if (isGold) {
+    fetchGoldPrice(done);
   } else {
-    fetcher(fetchArg, done);
+    fetchStockPrice(asset.symbol, done);
   }
 }
 
@@ -3301,6 +3435,16 @@ function finishPriceRefreshJob(fields) {
   });
 }
 
+function countFailedAssetRefreshes(results) {
+  var failedSymbols = {};
+  (results || []).filter(function (result) {
+    return result && !result.ok && result.symbol && result.symbol != '*';
+  }).forEach(function (result) {
+    failedSymbols[result.symbol] = true;
+  });
+  return Object.keys(failedSymbols).length;
+}
+
 function startPriceRefreshJob(targetSymbol) {
   if (priceRefreshJob.status == 'RUNNING') {
     return false;
@@ -3404,13 +3548,7 @@ function startPriceRefreshJob(targetSymbol) {
                   return;
                 }
 
-                var failedSymbols = {};
-                results.filter(function (result) {
-                  return result && !result.ok && result.symbol && result.symbol != '*';
-                }).forEach(function (result) {
-                  failedSymbols[result.symbol] = true;
-                });
-                var failed = Object.keys(failedSymbols).length;
+                var failed = countFailedAssetRefreshes(results);
                 var ok = Math.max(0, assets.length - failed);
                 finishPriceRefreshJob({
                   status: 'COMPLETED',
@@ -3815,13 +3953,13 @@ function mapRowsBySymbol(rows) {
   return mapped;
 }
 
-function buildPriceUpdateRows(summaryRows, assetsBySymbol, historyRows, coverageRows, transactions) {
+function buildPriceUpdateRows(summaryRows, assetsBySymbol, historyRows, coverageRows, transactions, now) {
   var historyBySymbol = mapRowsBySymbol(historyRows);
   var coverageBySymbol = mapRowsBySymbol(coverageRows);
   var activeSymbols = findActiveQuantitySymbols(transactions);
   var oldestBuyDates = findOldestBuyDatesBySymbol(transactions);
-  var reportDate = getReportDate();
-  var now = new Date();
+  now = now ? new Date(now) : new Date();
+  var reportDate = getReportDate(now);
 
   summaryRows.forEach(function (row) {
     if (isFinite(row.netQty) && Math.abs(row.netQty) > 0.0000001) {
@@ -3842,11 +3980,13 @@ function buildPriceUpdateRows(summaryRows, assetsBySymbol, historyRows, coverage
     });
     var rows = historyBySymbol[row.symbol] || [];
     var intervals = coverageBySymbol[row.symbol] || [];
+    var historyEndLimit = getHistoryEndLimitDate(asset, now);
+    var publicationPendingCount = getFundPublicationPendingCount(asset, reportDate, historyEndLimit);
     var sourceRanges = asset.assetSubType == 'MMF' ? [] : getPriceHistorySourceRanges(
       asset,
       reportDate,
       asset.priceHistoryStartDate,
-      getHistoryEndLimitDate(asset, now)
+      historyEndLimit
     );
     var displayIntervals = intervals.slice();
 
@@ -3873,7 +4013,14 @@ function buildPriceUpdateRows(summaryRows, assetsBySymbol, historyRows, coverage
       summary.firstCompletedDate = '';
       summary.lastCompletedDate = '';
       summary.latestSnapshotDate = asset.latestPriceDate || '';
-    } else if (asset.priceHistoryFetchStatus == 'ERROR' || asset.priceHistoryFetchStatus == 'RATE_LIMITED') {
+    } else if (publicationPendingCount) {
+      summary.pendingCount += publicationPendingCount;
+      if (summary.status == 'UP_TO_DATE') {
+        summary.status = 'NEEDS_UPDATE';
+      }
+    }
+    if (asset.assetSubType != 'MMF' &&
+      (asset.priceHistoryFetchStatus == 'ERROR' || asset.priceHistoryFetchStatus == 'RATE_LIMITED')) {
       summary.status = 'FAILED';
     }
 
