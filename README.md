@@ -28,6 +28,19 @@ The app is built for personal analysis. It is not tax software and does not make
 - Generate a daily portfolio report from the local SQLite snapshot, either with the OpenAI API or by copying an English, Chinese, or Japanese prompt into ChatGPT.
 - Show the application version in the navigation bar.
 
+## Version 0.2.0
+
+This release makes mapped Yahoo Finance Japan fund updates resilient to page-state variations and NAV publication lag:
+
+- Accept both ordinary and escaped Yahoo fund token representations while rejecting malformed or missing tokens without persisting token material.
+- Preserve Yahoo's published NAV date and the existing per-10,000-unit conversion instead of labeling the prior NAV with the new Japanese calendar date.
+- Represent an eligible but unpublished fund session as pending publication, and stop history requests at the latest provider-derived NAV date.
+- Keep genuine transport, token, and payload failures visible with retry backoff; manual Retry preserves older NAV rows and completes recovered coverage.
+- Fall back to recent history when the public page's NAV markup cannot be parsed, without requesting an unpublished date.
+- Require explicit secure authentication for non-local startup while retaining an explicit local-only development mode.
+- Restore the tested Linux runtime and dependency workflow.
+- Add deterministic offline provider, Price Update, and temporary-SQLite coverage without requiring a database migration.
+
 ## Version 0.1.3
 
 This release prepares a more reliable, inspectable price-update workflow:
