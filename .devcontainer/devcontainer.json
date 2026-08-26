@@ -10,7 +10,8 @@
       "version": "22.20.0"
     },
     "ghcr.io/devcontainers/features/git:1": {},
-    "ghcr.io/devcontainers/features/github-cli:1": {}
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
   },
 
   "postCreateCommand": "bash .devcontainer/post-create.sh",
