@@ -32,6 +32,18 @@ var historyPayload = JSON.stringify({
   }],
   paging: { hasNext: false, totalPage: 1 }
 });
+var chartHistoryPayload = JSON.stringify({
+  priceHistories: [{
+    baseDatetime: '2026-08-26T00:00:00+09:00',
+    baseDate: '2026-08-26',
+    openPrice: 124000,
+    highPrice: 125000,
+    lowPrice: 123000,
+    closePrice: 124500,
+    netAssetsBalance: 999999,
+    returnRate: 1.25
+  }]
+});
 
 var adapter = {
   fetchFundPage: function (fundCode, callback) {
@@ -73,6 +85,24 @@ async function main() {
   });
   assert.strictEqual(JSON.stringify(result).indexOf('synthetic.header.signature'), -1);
 
+  var chartHistoryProvider = createYahooFundProvider({
+    fetchFundPage: function (fundCode, callback) {
+      callback(null, escapedFundPage, { cookieHeader: 'synthetic-session=cookie' });
+    },
+    fetchFundHistoryPage: function (request, callback) {
+      assert.strictEqual(request.cookieHeader, 'synthetic-session=cookie');
+      callback(null, chartHistoryPayload);
+    }
+  });
+  rows = await fetchPriceHistory(chartHistoryProvider, asset, '2026-08-26', '2026-08-26');
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].priceDate, '2026-08-26');
+  assert.strictEqual(rows[0].open, 124000);
+  assert.strictEqual(rows[0].high, 125000);
+  assert.strictEqual(rows[0].low, 123000);
+  assert.strictEqual(rows[0].close, 124500);
+  assert.strictEqual(rows[0].netAssetsBalance, 999999);
+
   var ordinaryTokenProvider = createYahooFundProvider({
     fetchFundPage: function (fundCode, callback) {
       callback(null, [
@@ -89,6 +119,36 @@ async function main() {
     }
   });
   rows = await fetchPriceHistory(ordinaryTokenProvider, asset, '2026-08-25', '2026-08-25');
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].priceDate, '2026-08-25');
+
+  var authPageCalls = 0;
+  var authHistoryCalls = 0;
+  var refreshedTokenProvider = createYahooFundProvider({
+    fetchFundPage: function (fundCode, callback) {
+      authPageCalls++;
+      var token = authPageCalls == 1 ? 'synthetic.stale.signature' : 'synthetic.fresh.signature';
+      callback(null, [
+        '<div>投資信託</div><div>TEST1234</div><div>123,456</div><div>前日比 +100</div>',
+        '<script>{"priceBoard":{"value":"123,456","updateDate":"8/25"},"jwtToken":"' + token + '"}</script>'
+      ].join(''));
+    },
+    fetchFundHistoryPage: function (request, callback) {
+      authHistoryCalls++;
+      if (request.token == 'synthetic.stale.signature') {
+        callback(new Error('HTTP 401'));
+        return;
+      }
+      if (request.token != 'synthetic.fresh.signature') {
+        callback(new Error('Unexpected refreshed token'));
+        return;
+      }
+      callback(null, historyPayload);
+    }
+  });
+  rows = await fetchPriceHistory(refreshedTokenProvider, asset, '2026-08-25', '2026-08-25');
+  assert.strictEqual(authPageCalls, 2);
+  assert.strictEqual(authHistoryCalls, 2);
   assert.strictEqual(rows.length, 1);
   assert.strictEqual(rows[0].priceDate, '2026-08-25');
 
