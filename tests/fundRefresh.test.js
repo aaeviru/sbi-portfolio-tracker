@@ -8,6 +8,7 @@ process.env.SBI_PORTFOLIO_DB_PATH = path.join(tmpDir, 'test.sqlite');
 
 var withDb = require('../lib/db').withDb;
 var app = require('../app');
+var historyCoverage = require('../lib/historyCoverage');
 
 function openDb() {
   return new Promise(function (resolve, reject) {
@@ -353,6 +354,80 @@ async function main() {
     recoveredHistoryRows.map(function (row) { return [row.priceDate, row.close]; }),
     [['2026-08-24', 110000], ['2026-08-25', 123456]]
   );
+
+  var staleAsset = Object.assign({}, asset, {
+    symbol: 'FUND:stale-failure',
+    name: 'Synthetic stale failure fund',
+    priceHistoryFetchStatus: 'ERROR',
+    latestPriceDate: '2026-08-26',
+    latestPriceDateBasis: 'FETCH_DATE_ESTIMATE',
+    priceHistoryFetchError: 'Yahoo fund token not found'
+  });
+  await updateOne(opened.db.collection('assets'), { symbol: staleAsset.symbol }, { $set: staleAsset }, { upsert: true });
+  var staleHistoryRow = makeFundHistoryRow(staleAsset.symbol, '2026-08-25', 123456);
+  await updateOne(
+    opened.db.collection('priceHistory'),
+    { symbol: staleHistoryRow.symbol, priceDate: staleHistoryRow.priceDate, source: staleHistoryRow.source },
+    { $set: staleHistoryRow },
+    { upsert: true }
+  );
+  var staleCompleteInterval = historyCoverage.makeIntervalsForDates(
+    staleAsset,
+    'YAHOO_FUND_HISTORY',
+    staleAsset.symbol,
+    ['2026-08-25'],
+    { status: 'COMPLETE', reason: 'PROVIDER_ROW' }
+  )[0];
+  staleCompleteInterval.startDate = '2024-08-26';
+  staleCompleteInterval.coverageKey = historyCoverage.makeCoverageKey(staleCompleteInterval);
+  var staleFailedInterval = historyCoverage.makeIntervalsForDates(
+    staleAsset,
+    'YAHOO_FUND_HISTORY',
+    staleAsset.symbol,
+    ['2026-08-26'],
+    {
+      status: 'FAILED',
+      reason: 'FETCH_ERROR',
+      error: 'Yahoo fund token not found',
+      attemptCount: 1,
+      lastAttemptAt: '2026-08-25T15:41:00.000Z',
+      retryAfter: '2026-08-25T16:41:00.000Z',
+      receivedCount: 0
+    }
+  )[0];
+  await updateOne(
+    opened.db.collection('priceHistoryCoverage'),
+    { coverageKey: staleCompleteInterval.coverageKey },
+    { $set: staleCompleteInterval },
+    { upsert: true }
+  );
+  await updateOne(
+    opened.db.collection('priceHistoryCoverage'),
+    { coverageKey: staleFailedInterval.coverageKey },
+    { $set: staleFailedInterval },
+    { upsert: true }
+  );
+
+  var staleProviderCalled = false;
+  var staleResult = await refreshHistory(opened.db, staleAsset, {
+    yahooFundProvider: {
+      fetchPriceHistory: function (requestAsset, startDate, endDate, callback) {
+        staleProviderCalled = true;
+        callback(new Error('Stale interval should be outside the publication range'));
+      }
+    },
+    now: new Date('2026-08-25T15:42:00.000Z'),
+    budget: { remaining: 5, deadline: Date.parse('2026-08-25T15:52:00.000Z'), requests: 0 }
+  });
+  var reconciledAsset = await findOne(opened.db.collection('assets'), { symbol: staleAsset.symbol });
+  var reconciledIntervals = await toArray(opened.db.collection('priceHistoryCoverage').find({ symbol: staleAsset.symbol }));
+
+  assert.strictEqual(staleProviderCalled, false);
+  assert.strictEqual(staleResult.ok, true);
+  assert.strictEqual(staleResult.reason, 'PENDING_PUBLICATION');
+  assert.strictEqual(reconciledAsset.priceHistoryFetchStatus, 'PENDING_PUBLICATION');
+  assert.strictEqual(reconciledAsset.priceHistoryFetchError, '');
+  assert.strictEqual(reconciledIntervals.some(function (interval) { return interval.status == 'FAILED'; }), false);
 
   opened.close();
   fs.rmSync(tmpDir, { recursive: true, force: true });

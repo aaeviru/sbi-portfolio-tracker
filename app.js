@@ -2683,6 +2683,52 @@ function saveCoverageForSource(db, asset, source, intervals, callback) {
   });
 }
 
+function reconcileFailedCoverageWithSourceRanges(db, asset, sourceRanges, state, callback) {
+  var rangesBySource = {};
+  (sourceRanges || []).forEach(function (range) {
+    if (!rangesBySource[range.source]) {
+      rangesBySource[range.source] = [];
+    }
+    rangesBySource[range.source].push(range);
+  });
+
+  var changedSources = {};
+  var retained = (state.intervals || []).filter(function (interval) {
+    if (interval.status != 'FAILED') {
+      return true;
+    }
+    var ranges = rangesBySource[interval.source] || [];
+    var overlapsActiveRange = ranges.some(function (range) {
+      return interval.endDate >= range.startDate && interval.startDate <= range.endDate;
+    });
+    if (!overlapsActiveRange) {
+      changedSources[interval.source] = true;
+    }
+    return overlapsActiveRange;
+  });
+  var sources = Object.keys(changedSources);
+  var index = 0;
+
+  function next(err) {
+    if (err) {
+      callback(err);
+      return;
+    }
+    if (index >= sources.length) {
+      state.intervals = retained;
+      callback(null, state);
+      return;
+    }
+    var source = sources[index++];
+    var sourceIntervals = retained.filter(function (interval) {
+      return interval.source == source;
+    });
+    saveCoverageForSource(db, asset, source, sourceIntervals, next);
+  }
+
+  next();
+}
+
 function bootstrapAssetPriceHistoryCoverage(db, asset, sourceRanges, state, callback) {
   if (Number(asset.priceHistoryCoverageVersion || 0) >= 1) {
     callback(null, state);
@@ -2790,7 +2836,13 @@ function refreshAssetPriceHistory(db, asset, options, callback) {
         callback(bootstrapErr);
         return;
       }
-      nextWindow();
+      reconcileFailedCoverageWithSourceRanges(db, asset, sourceRanges, state, function (reconcileErr) {
+        if (reconcileErr) {
+          callback(reconcileErr);
+          return;
+        }
+        nextWindow();
+      });
     });
 
     function finish(status, error, pendingCount, deferredCount, stop) {

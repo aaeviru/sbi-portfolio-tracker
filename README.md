@@ -28,6 +28,14 @@ The app is built for personal analysis. It is not tax software and does not make
 - Generate a daily portfolio report from the local SQLite snapshot, either with the OpenAI API or by copying an English, Chinese, or Japanese prompt into ChatGPT.
 - Show the application version in the navigation bar.
 
+## Version 0.2.1
+
+This patch release keeps recovered fund updates from remaining failed on the Price Update page:
+
+- Remove obsolete failed coverage intervals when they fall outside the provider's current publication range, while preserving completed history.
+- Retry Yahoo fund history once with a freshly loaded JWT when the first token receives HTTP 401.
+- Add regression coverage for legacy failed intervals and stale Yahoo JWT recovery.
+
 ## Version 0.2.0
 
 This release makes mapped Yahoo Finance Japan fund updates resilient to page-state variations and NAV publication lag:
