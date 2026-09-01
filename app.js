@@ -1744,13 +1744,20 @@ function parseYahooChartDailyPriceHistory(json, asset) {
   return rows;
 }
 
-function fetchYahooChartDailyPriceHistory(asset, startDate, endDate, callback) {
-  var period1 = Math.floor(new Date(startDate + 'T00:00:00Z').getTime() / 1000);
+function fetchYahooChartDailyPriceHistory(asset, startDate, endDate, options, callback) {
+  if (typeof options == 'function') {
+    callback = options;
+    options = {};
+  }
+  options = options || {};
+
+  var requestStartDate = asset.assetType == 'US_STOCK' ? addDays(startDate, -1) : startDate;
+  var period1 = Math.floor(new Date(requestStartDate + 'T00:00:00Z').getTime() / 1000);
   var period2 = Math.floor(new Date(addDays(endDate, 1) + 'T00:00:00Z').getTime() / 1000);
   var url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(asset.symbol) +
     '?period1=' + period1 + '&period2=' + period2 + '&interval=1d';
 
-  fetchText(url, function (err, data) {
+  (options.fetchText || fetchText)(url, function (err, data) {
     if (err) {
       callback(err);
       return;
@@ -2825,6 +2832,7 @@ function refreshAssetPriceHistory(db, asset, options, callback) {
   var requestCount = 0;
   var inserted = 0;
   var updated = 0;
+  var attemptedSessionDates = {};
 
   findAssetPriceHistoryState(db, asset, function (stateErr, state) {
     if (stateErr) {
@@ -2882,6 +2890,16 @@ function refreshAssetPriceHistory(db, asset, options, callback) {
         nowText: budget.forceRetry ? '9999-12-31T23:59:59.999Z' : now.toISOString()
       });
       var deferredCount = Number(windows.deferredCount || 0);
+      windows = windows.filter(function (window) {
+        var alreadyAttempted = (window.expectedDates || []).some(function (date) {
+          return attemptedSessionDates[window.source + '|' + date];
+        });
+        if (!alreadyAttempted) {
+          return true;
+        }
+        deferredCount += window.expectedCount;
+        return false;
+      });
 
       if (!windows.length) {
         var status = deferredCount
@@ -2899,6 +2917,9 @@ function refreshAssetPriceHistory(db, asset, options, callback) {
       }
 
       var window = windows[0];
+      (window.expectedDates || []).forEach(function (date) {
+        attemptedSessionDates[window.source + '|' + date] = true;
+      });
       var historyFetcher = getHistoryFetcher(asset, window.source, options);
       budget.remaining--;
       budget.requests = Number(budget.requests || 0) + 1;

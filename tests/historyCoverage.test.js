@@ -40,6 +40,24 @@ var deferred = coverage.buildPendingWindows({
   nowText: '2026-08-05T00:30:00.000Z'
 });
 assert.strictEqual(deferred.length, 0);
+
+var deferredSummary = coverage.summarizeCoverage(
+  jpAsset,
+  sourceRanges,
+  rowsWithHole,
+  classified,
+  '2026-08-05T00:30:00.000Z'
+);
+
+var dueSummary = coverage.summarizeCoverage(
+  jpAsset,
+  sourceRanges,
+  rowsWithHole,
+  classified,
+  '2026-08-05T03:00:00.000Z'
+);
+assert.strictEqual(dueSummary.status, 'FAILED');
+assert.strictEqual(deferredSummary.status, 'RETRY_SCHEDULED');
 assert.strictEqual(deferred.deferredCount, 1);
 
 var completed = coverage.classifyAttempt({
