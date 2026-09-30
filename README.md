@@ -27,6 +27,16 @@ The app is built for personal analysis. It is not tax software and does not make
 - Show combined monthly/yearly summary history with historical period prices, Combined Total P/L diff, and a Detail drilldown for period changes.
 - Generate a daily portfolio report from the local SQLite snapshot, either with the OpenAI API or by copying an English, Chinese, or Japanese prompt into ChatGPT.
 - Show the application version in the navigation bar.
+- Review Yahoo Finance Japan stock-split notices on the Price Update page before applying them to portfolio calculations.
+
+## Version 0.3.0
+
+This release adds a reviewable Japanese stock-split workflow and fixes trade charts after a confirmed split:
+
+- Scan Yahoo Finance Japan history during price updates for splits relevant to imported trades or saved price history, and show new events as pending on `/prices`.
+- Preview and confirm, dismiss, or manually correct split events; only confirmed events affect portfolio calculations. Original imported transactions remain unchanged.
+- Apply confirmed split ratios to positions, FIFO results, historical summaries, and trade-chart quantities, markers, and pre-split prices.
+- Show a warning when a sharp price change resembles a split but Yahoo provides no matching event.
 
 ## Version 0.2.1
 
