@@ -48,8 +48,8 @@ async function main() {
   assert.deepStrictEqual(parsed.events.map(function (event) { return [event.exDate, event.ratio]; }), [['2026-09-29', 2]]);
   assert.throws(function () { splitMath.parseYahooHistoryPage(html, '7203.T'); }, /table was not found/);
   assert.strictEqual(splitMath.scanStart('2025-12-18', { lastCheckedThrough: '2026-09-20', lastFullScanDate: '2026-08-01' }, '2026-09-29'), '2025-12-18');
-  assert.strictEqual(splitMath.scanStart('2025-01-01', { firstTradeDate: '2025-01-01', lastCheckedThrough: '2026-09-20', lastFullScanDate: '2026-09-15' }, '2026-09-29'), '2026-08-21');
-  assert.strictEqual(splitMath.scanStart('2024-12-01', { firstTradeDate: '2025-01-01', lastCheckedThrough: '2026-09-20', lastFullScanDate: '2026-09-15' }, '2026-09-29'), '2024-12-01');
+  assert.strictEqual(splitMath.scanStart('2025-01-01', { firstRelevantDate: '2025-01-01', lastCheckedThrough: '2026-09-20', lastFullScanDate: '2026-09-15' }, '2026-09-29'), '2026-08-21');
+  assert.strictEqual(splitMath.scanStart('2024-12-01', { firstRelevantDate: '2025-01-01', lastCheckedThrough: '2026-09-20', lastFullScanDate: '2026-09-15' }, '2026-09-29'), '2024-12-01');
 
   var opened = await openDb();
   var db = opened.db;
@@ -74,6 +74,15 @@ async function main() {
       { symbol: '8316.T', priceDate: '2026-09-28', source: 'YAHOO_CHART', close: 6988 });
     await upsert(db.collection('priceHistory'), { symbol: '8316.T', priceDate: '2026-09-29', source: 'YAHOO_CHART' },
       { symbol: '8316.T', priceDate: '2026-09-29', source: 'YAHOO_CHART', close: 3357 });
+    await upsert(db.collection('priceHistory'), { symbol: '8316.T', priceDate: '2024-08-05', source: 'JQUANTS' },
+      { symbol: '8316.T', priceDate: '2024-08-05', source: 'JQUANTS', close: 8162 });
+    await upsert(db.collection('priceHistory'), { symbol: '8316.T', priceDate: '2024-09-26', source: 'JQUANTS' },
+      { symbol: '8316.T', priceDate: '2024-09-26', source: 'JQUANTS', close: 9174 });
+    var chartDates = await scanner.findScanStartDatesAsync(db, { '8316.T': '2025-12-18' });
+    assert.strictEqual(chartDates['8316.T'], '2024-08-05');
+    assert.strictEqual(splitMath.scanStart(chartDates['8316.T'], {
+      firstRelevantDate: '2025-12-18', lastCheckedThrough: '2026-09-29', lastFullScanDate: '2026-09-29'
+    }, '2026-09-30'), '2024-08-05');
 
     var urls = [];
     function yahooFetch(url, callback) { urls.push(url); callback(null, html); }
@@ -138,6 +147,13 @@ async function main() {
     assert.strictEqual(after.fifoRealizedPl, 165790);
     assert.strictEqual(after.previousPrice, 3494);
     assert.strictEqual(after.dayPl, -27400);
+    var olderPreview = actions.previewCandidate(trades, afterAssets['8316.T'], {
+      id: 'YAHOO:8316.T:2024-09-27', symbol: '8316.T', exDate: '2024-09-27',
+      beforeShares: 1, afterShares: 3, ratio: 3, status: 'PENDING', operation: 'ADD'
+    }, '2026-09-29', await findAll(db.collection('priceHistory'), { symbol: '8316.T' }));
+    assert.strictEqual(olderPreview.precedesTrades, true);
+    assert.strictEqual(olderPreview.before.netQty, olderPreview.after.netQty);
+    assert.deepStrictEqual(olderPreview.chartPrice, { date: '2024-09-26', before: 4587, after: 1529 });
     assert.strictEqual(summary.buildPortfolioSummary(trades, afterAssets, '2026-09-28')[0].netQty, 100);
     assert.strictEqual((await findAll(db.collection('transactions'), { symbol: '8316.T' })).length, 5);
 

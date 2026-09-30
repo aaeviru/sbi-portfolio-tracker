@@ -340,6 +340,8 @@
             <span>Found: <%= event.observedAt %></span>
           </div>
           <% if (event.replacesId) { %><p>Correction of confirmed event <%= event.replacesId %>.</p><% } %>
+          <% if (event.preview.precedesTrades) { %><p>This split predates your imported trades. Confirming it adjusts older chart prices without changing your current position or P/L.</p><% } %>
+          <% if (event.preview.chartPrice) { %><p>Example chart close on <%= event.preview.chartPrice.date %>: <strong><%= event.preview.chartPrice.before.toLocaleString() %> → <%= event.preview.chartPrice.after.toLocaleString() %> JPY/share</strong></p><% } %>
           <% if (event.preview.before && event.preview.after) { %>
             <div class="table-scroll"><table class="split-preview">
               <thead><tr><th>Impact</th><th>Shares</th><th>Remaining cost</th><th>Market value</th><th>Unrealized P/L</th><th>Realized P/L</th></tr></thead>

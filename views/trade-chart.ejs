@@ -376,7 +376,7 @@
       <div id="tradePager" class="table-pager"></div>
 
       <table>
-        <caption>Saved Price History</caption>
+        <caption id="priceHistoryCaption">Saved Price History</caption>
         <thead>
           <tr>
             <th>Provider Price Date</th>
@@ -603,6 +603,7 @@
         'Completed ' + (asset.priceDateLabel || 'price date') + ' history ' + (asset.completedHistoryCount || 0) + (asset.completedHistoryFirstDate ? ' / ' + asset.completedHistoryFirstDate + ' to ' + asset.completedHistoryLastDate : ''),
         'Live snapshots ' + (asset.snapshotCount || 0)
       ];
+      if (asset.splitAdjusted) values.push('Chart prices and markers adjusted for confirmed splits; SBI trades shown as imported');
       var technical = asset.technicalIndicators || {};
       values.push('Indicators ' + (technical.status || 'NO_HISTORY'));
       if (technical.rsi14 != null) {
@@ -993,6 +994,8 @@
     }
 
     function renderPriceHistoryRows(asset) {
+      document.getElementById('priceHistoryCaption').textContent = asset.splitAdjusted
+        ? 'Price History (split-adjusted display; stored prices unchanged)' : 'Saved Price History';
       var body = document.getElementById('priceHistoryRows');
       body.innerHTML = '';
       var rows = (asset.priceHistory || []).slice().reverse();
@@ -1049,8 +1052,8 @@
           point.date,
           point.marketDate || point.date,
           point.side,
-          formatNumber(point.price),
-          formatNumber(point.quantity),
+          formatNumber(point.rawPrice === undefined ? point.price : point.rawPrice),
+          formatNumber(point.rawQuantity === undefined ? point.quantity : point.rawQuantity),
           formatNumber(point.amount),
           point.account || ''
         ].forEach(function (value, index) {

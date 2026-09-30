@@ -3544,19 +3544,22 @@ function refreshAssetPrices(db, assets, callback) {
 }
 
 function scanStockSplitsSequentially(db, assets, firstTradeDates, callback) {
-  var index = 0;
-  var results = [];
-  function next() {
-    if (index >= assets.length) { callback(null, results); return; }
-    var asset = assets[index++];
-    priceRefreshJob.currentSymbol = 'Split scan: ' + asset.symbol;
-    stockSplitScan.scanSymbol(db, asset.symbol, firstTradeDates[asset.symbol], getReportDate(), fetchText, function (err, result) {
-      results.push(err ? { ok: false, symbol: asset.symbol, type: 'SPLIT_SCAN', error: err.message } : Object.assign({ type: 'SPLIT_SCAN' }, result));
-      priceRefreshJob.results = priceRefreshJob.results.concat(results.slice(-1)).slice(-100);
-      setTimeout(next, 800);
-    });
-  }
-  next();
+  stockSplitScan.findScanStartDates(db, firstTradeDates, function (startErr, startDates) {
+    if (startErr) { callback(startErr); return; }
+    var index = 0;
+    var results = [];
+    function next() {
+      if (index >= assets.length) { callback(null, results); return; }
+      var asset = assets[index++];
+      priceRefreshJob.currentSymbol = 'Split scan: ' + asset.symbol;
+      stockSplitScan.scanSymbol(db, asset.symbol, startDates[asset.symbol], getReportDate(), fetchText, function (err, result) {
+        results.push(err ? { ok: false, symbol: asset.symbol, type: 'SPLIT_SCAN', error: err.message } : Object.assign({ type: 'SPLIT_SCAN' }, result));
+        priceRefreshJob.results = priceRefreshJob.results.concat(results.slice(-1)).slice(-100);
+        setTimeout(next, 800);
+      });
+    }
+    next();
+  });
 }
 
 function startImportSplitScanJob(symbols) {
@@ -3569,20 +3572,28 @@ function startImportSplitScanJob(symbols) {
   setTimeout(function () {
     withDb(function (err, db, close) {
       if (err) { importSplitScanJob.status = 'ERROR'; importSplitScanJob.error = err.message; return; }
-      findAllTransactions(db, function (findErr, docs) {
-        if (findErr) { close(); importSplitScanJob.status = 'ERROR'; importSplitScanJob.error = findErr.message; return; }
-        var dates = findFirstStockTradeDates(docs);
-        function next() {
-          var symbol = importSplitScanJob.queued.shift();
-          if (!symbol) { close(); importSplitScanJob.status = 'COMPLETED'; importSplitScanJob.currentSymbol = ''; return; }
-          importSplitScanJob.currentSymbol = symbol;
-          stockSplitScan.scanSymbol(db, symbol, dates[symbol], getReportDate(), fetchText, function (scanErr, result) {
-            importSplitScanJob.results.push(scanErr ? { ok: false, symbol: symbol, error: scanErr.message } : result);
-            setTimeout(next, 800);
+      function fail(error) {
+        close();
+        importSplitScanJob.status = 'ERROR';
+        importSplitScanJob.error = error.message;
+        importSplitScanJob.currentSymbol = '';
+      }
+      function next() {
+        var symbol = importSplitScanJob.queued.shift();
+        if (!symbol) { close(); importSplitScanJob.status = 'COMPLETED'; importSplitScanJob.currentSymbol = ''; return; }
+        importSplitScanJob.currentSymbol = symbol;
+        db.collection('transactions').find({ symbol: symbol }).toArray(function (findErr, docs) {
+          if (findErr) { fail(findErr); return; }
+          stockSplitScan.findScanStartDates(db, findFirstStockTradeDates(docs), function (startErr, dates) {
+            if (startErr) { fail(startErr); return; }
+            stockSplitScan.scanSymbol(db, symbol, dates[symbol], getReportDate(), fetchText, function (scanErr, result) {
+              importSplitScanJob.results.push(scanErr ? { ok: false, symbol: symbol, error: scanErr.message } : result);
+              setTimeout(next, 800);
+            });
           });
-        }
-        next();
-      });
+        });
+      }
+      next();
     });
   }, 0);
 }
@@ -4094,12 +4105,13 @@ app.get('/trade-chart', function (req, res) {
                 return;
               }
 
-              var summaryReport = buildPortfolioSummaryReport(docsWithGold, assetsBySymbol, mapPriceHistoryBySymbol(historyRows));
+              var reportDate = getReportDate();
+              var summaryReport = buildPortfolioSummaryReport(docsWithGold, assetsBySymbol, mapPriceHistoryBySymbol(historyRows), reportDate);
               sortTradeChartAssetsBySummaryRows(assets, summaryReport.rows);
-              attachPriceHistoryToTradeChartData(assets, historyRows);
+              attachPriceHistoryToTradeChartData(assets, historyRows, assetsBySymbol, reportDate);
               res.render('trade-chart.ejs', {
                 assets: assets,
-                reportDate: getReportDate(),
+                reportDate: reportDate,
                 chartDataJson: JSON.stringify(assets).replace(/</g, '\\u003c')
               });
             });
@@ -4399,7 +4411,7 @@ app.get('/prices', function (req, res) {
                     close();
                     if (scanErr) { res.status(500).send(scanErr.message); return; }
                     var pending = splitRows.filter(function (row) { return row.status == 'PENDING'; }).map(function (row) {
-                      return Object.assign({}, row, { preview: stockSplitActions.previewCandidate(docs, assetsBySymbol[row.symbol], row, getReportDate()) });
+                      return Object.assign({}, row, { preview: stockSplitActions.previewCandidate(docs, assetsBySymbol[row.symbol], row, getReportDate(), historyRows) });
                     });
                     res.render('prices.ejs', {
                       rows: buildPriceUpdateRows(buildPortfolioSummary(docs, assetsBySymbol), assetsBySymbol, historyRows, coverageRows, docs),
