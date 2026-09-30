@@ -307,6 +307,10 @@ The history boundary called "today" depends on the asset:
 - Funds use the latest published NAV date when known.
 - MMFs use the imported SBI transaction price date.
 
+Japanese stock splits are checked separately from stock prices. `Update All` and per-asset `Retry` scan Yahoo Finance Japan's explicit `分割：1株→2株`-style rows for current Japanese stock holdings. An SBI CSV import also scans Japanese stocks appearing in that file, even when their unadjusted balance is zero. The first scan covers the stock's imported trade history; later scans overlap the last successful range, with a full audit about once a month. Yahoo failures remain visible on `/prices` and do not count as a clean scan. A split-like price jump without a Yahoo event produces a warning only.
+
+A Yahoo event appears as **Pending** in the Stock split events panel on `/prices`. Check its Yahoo link, ex-rights date, ratio, and before/after portfolio figures, then choose **Confirm and apply** or **Dismiss**. Only confirmed splits affect holdings, FIFO, valuation, day P/L, and historical summaries; original SBI trade rows and raw price history remain unchanged. The manual form can add a missing split or correct/remove a confirmed one, again through a pending review step. This workflow currently covers Japanese stocks only and depends on Yahoo's public page format.
+
 Expected history dates exclude weekends and known Japanese/US market holidays. The Price Update table shows the provider price date, completed-history range, live snapshot date, pending session count, next retry, and the persisted coverage intervals.
 
 For US stocks, chart comparison dates are shifted to the US market date when needed, while the original SBI transaction date remains visible in tables.

@@ -86,6 +86,21 @@
       height: 14px;
     }
 
+    .split-panel { border: 1px solid #aebdc4; background: #fff; padding: 14px; margin: 16px 0; }
+    .split-panel h2 { margin: 0 0 8px; font-size: 20px; }
+    .split-panel h3 { margin: 16px 0 8px; font-size: 16px; }
+    .split-panel p { margin: 6px 0 12px; }
+    .split-card { border: 1px solid #d0d9dd; padding: 12px; margin: 10px 0; }
+    .split-card.pending { border-color: #b07a18; background: #fffbf0; }
+    .split-alert { border-color: #ad4f48; background: #fbe9e7; }
+    .split-facts, .split-actions, .manual-fields { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+    .split-facts span { min-width: 120px; }
+    .split-actions { margin-top: 10px; }
+    .split-panel label { display: flex; flex-direction: column; gap: 4px; }
+    .split-panel input, .split-panel select { min-height: 32px; border: 1px solid #8899a1; padding: 4px 6px; }
+    .split-preview { min-width: 620px; width: auto; margin: 8px 0; }
+    .split-preview th { position: static; }
+    .split-preview td { white-space: nowrap; }
     .table-scroll {
       overflow-x: auto;
       border: 1px solid #aebdc4;
@@ -241,6 +256,11 @@
         ? 'Refreshing ' + (status.currentSymbol || '') + '  ' + status.processedAssets + ' / ' + status.totalAssets + '  History requests: ' + status.historyRequests
         : 'Last refresh: ' + status.status + '  OK: ' + status.ok + '  Failed: ' + status.failed + '  History requests: ' + status.historyRequests;
       if (updateButton) updateButton.disabled = status.status == 'RUNNING';
+      var importLine = document.getElementById('import-split-progress');
+      if (importLine && status.importSplitScan) {
+        importLine.hidden = status.importSplitScan.status != 'RUNNING';
+        importLine.textContent = 'Checking Yahoo split history after import: ' + (status.importSplitScan.currentSymbol || 'starting');
+      }
     }
 
     function pollRefresh() {
@@ -248,9 +268,9 @@
         .then(function (response) { return response.json(); })
         .then(function (status) {
           updateProgress(status);
-          if (status.status == 'RUNNING') {
+          if (status.status == 'RUNNING' || (status.importSplitScan && status.importSplitScan.status == 'RUNNING')) {
             window.setTimeout(pollRefresh, 1500);
-          } else if (document.body.getAttribute('data-initial-status') == 'RUNNING') {
+          } else if (document.body.getAttribute('data-initial-status') == 'RUNNING' || document.body.getAttribute('data-initial-import-status') == 'RUNNING') {
             window.location.reload();
           }
         });
@@ -260,14 +280,14 @@
       highlightNav();
       formatNumbers();
       setFilter('ALL');
-      if (document.body.getAttribute('data-initial-status') == 'RUNNING') {
+      if (document.body.getAttribute('data-initial-status') == 'RUNNING' || document.body.getAttribute('data-initial-import-status') == 'RUNNING') {
         pollRefresh();
       }
     };
   </script>
 </head>
 
-<body data-initial-status="<%= refreshStatus.status %>">
+<body data-initial-status="<%= refreshStatus.status %>" data-initial-import-status="<%= refreshStatus.importSplitScan ? refreshStatus.importSplitScan.status : 'IDLE' %>">
   <%- include('partials/menu'); -%>
   <main class="content">
     <div class="page-header">
@@ -294,6 +314,69 @@
         <% } %>
       </span>
     </div>
+
+    <div id="import-split-progress" class="progress-line" <%= !refreshStatus.importSplitScan || refreshStatus.importSplitScan.status != 'RUNNING' ? 'hidden' : '' %>>
+      Checking Yahoo split history after import: <%= refreshStatus.importSplitScan && refreshStatus.importSplitScan.currentSymbol || 'starting' %>
+    </div>
+
+    <section class="split-panel" aria-labelledby="split-heading">
+      <h2 id="split-heading">Stock split events</h2>
+      <p>Yahoo Japan split rows are suggestions. Portfolio figures change only after you confirm an event. Original SBI trades stay intact.</p>
+      <% splitScanAlerts.forEach(function (scan) { %>
+        <div class="split-card split-alert"><strong><%= scan.symbol %> split check: <%= scan.status %></strong>
+          <span><%= scan.status == 'FAILED' ? scan.lastError : scan.warning %></span>
+          <% if (scan.lastAttemptAt) { %><small>Checked <%= scan.lastAttemptAt %></small><% } %>
+        </div>
+      <% }); %>
+      <% if (!stockSplitCandidates.length) { %><p>No pending split events.</p><% } %>
+      <% stockSplitCandidates.forEach(function (event) { %>
+        <div class="split-card pending">
+          <div class="split-facts">
+            <span><strong><%= event.symbol %></strong></span>
+            <span>Ex-rights date: <strong><%= event.exDate %></strong></span>
+            <span><strong><%= event.operation == 'REMOVE' ? 'Remove split' : event.beforeShares + ' shares → ' + event.afterShares + ' shares' %></strong></span>
+            <span><%= event.source == 'MANUAL' ? 'Manual entry' : 'Yahoo Japan history' %></span>
+            <% if (event.sourceUrl) { %><a href="<%= event.sourceUrl %>" target="_blank" rel="noopener noreferrer">View Yahoo source</a><% } %>
+            <span>Found: <%= event.observedAt %></span>
+          </div>
+          <% if (event.replacesId) { %><p>Correction of confirmed event <%= event.replacesId %>.</p><% } %>
+          <% if (event.preview.before && event.preview.after) { %>
+            <div class="table-scroll"><table class="split-preview">
+              <thead><tr><th>Impact</th><th>Shares</th><th>Remaining cost</th><th>Market value</th><th>Unrealized P/L</th><th>Realized P/L</th></tr></thead>
+              <tbody>
+                <% [['Current', event.preview.before], ['After confirmation', event.preview.after]].forEach(function (item) { %>
+                  <tr><td><%= item[0] %></td><td class="number" data-number="<%= item[1].netQty %>"></td><td class="number" data-number="<%= item[1].remainingCost %>"></td><td class="number" data-number="<%= item[1].marketValue == null ? '' : item[1].marketValue %>"></td><td class="number" data-number="<%= item[1].unrealizedPl == null ? '' : item[1].unrealizedPl %>"></td><td class="number" data-number="<%= item[1].realizedPl %>"></td></tr>
+                <% }); %>
+              </tbody>
+            </table></div>
+          <% } %>
+          <div class="split-actions">
+            <form action="/prices/splits/<%= encodeURIComponent(event.id) %>/confirm" method="post"><button class="primary" type="submit">Confirm and apply</button></form>
+            <form action="/prices/splits/<%= encodeURIComponent(event.id) %>/dismiss" method="post"><button type="submit">Dismiss</button></form>
+          </div>
+        </div>
+      <% }); %>
+      <h3>Add or correct a split manually</h3>
+      <form action="/prices/splits/manual" method="post">
+        <div class="manual-fields">
+          <label>Action<select name="operation"><option value="ADD">Add split</option><option value="REPLACE">Correct confirmed split</option><option value="REMOVE">Remove confirmed split</option></select></label>
+          <label>Symbol<input name="symbol" placeholder="8316.T" required></label>
+          <label>Ex-rights date (add/correct)<input name="exDate" type="date"></label>
+          <label>Before shares<input name="beforeShares" type="number" min="0.000001" step="any" placeholder="1"></label>
+          <label>After shares<input name="afterShares" type="number" min="0.000001" step="any" placeholder="2"></label>
+          <label>Confirmed event to correct<select name="replacesId"><option value="">None</option>
+            <% confirmedSplits.forEach(function (event) { %><option value="<%= event.id %>"><%= event.symbol %> <%= event.exDate %> <%= event.beforeShares %>→<%= event.afterShares %></option><% }); %>
+          </select></label>
+          <button type="submit">Review manual entry</button>
+        </div>
+      </form>
+      <% if (confirmedSplits.length) { %>
+        <h3>Confirmed splits</h3>
+        <% confirmedSplits.forEach(function (event) { %>
+          <div><%= event.symbol %> · <%= event.exDate %> · <%= event.beforeShares %> → <%= event.afterShares %> shares · <%= event.source == 'MANUAL' ? 'manual' : 'Yahoo Japan' %></div>
+        <% }); %>
+      <% } %>
+    </section>
 
     <div class="toolbar">
       <div class="filter-group" role="group" aria-label="Price status filter">

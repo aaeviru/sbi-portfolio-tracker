@@ -101,6 +101,9 @@ ejs.renderFile(path.join(__dirname, '..', 'views', 'prices.ejs'), {
   appVersion: '0.1.2',
   reportDate: '2026-08-05',
   message: '',
+  stockSplitCandidates: [],
+  confirmedSplits: [],
+  splitScanAlerts: [],
   refreshStatus: {
     status: 'COMPLETED',
     totalAssets: 1,

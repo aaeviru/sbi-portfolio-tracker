@@ -18,6 +18,10 @@ var buildDailyReportSnapshot = require('./lib/dailyReport').buildDailyReportSnap
 var dateDomains = require('./lib/dateDomains');
 var marketCalendars = require('./lib/marketCalendars');
 var historyCoverage = require('./lib/historyCoverage');
+var stockSplitScan = require('./lib/stockSplitScan');
+var stockSplitStore = require('./lib/stockSplitStore');
+var stockSplits = require('./lib/stockSplits');
+var stockSplitActions = require('./lib/stockSplitActions');
 var generateDailyReport = require('./lib/openaiReport').generateDailyReport;
 var loadAuthConfig = require('./lib/authConfig').loadAuthConfig;
 var buildChatGptReportPrompt = require('./lib/openaiReport').buildChatGptReportPrompt;
@@ -29,6 +33,7 @@ var PORT = Number(process.env.PORT || 80);
 var AUTH_COOKIE_NAME = 'sbi_auth';
 var authConfig = null;
 var JWT_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+var importSplitScanJob = { status: 'IDLE', queued: [], currentSymbol: '', results: [] };
 var priceRefreshJob = {
   status: 'IDLE',
   startedAt: '',
@@ -1290,6 +1295,16 @@ function findOldestBuyDatesBySymbol(transactions) {
   return oldestBySymbol;
 }
 
+function findFirstStockTradeDates(transactions) {
+  var dates = {};
+  transactions.forEach(function (tx) {
+    if (tx.assetType != 'STOCK' || !/^(?:[0-9]{4}|[0-9]{3}[A-Z])\.T$/.test(tx.symbol || '')) return;
+    var date = tx.tradeDate || String(tx.tradeDateTime || '').slice(0, 10);
+    if (date && (!dates[tx.symbol] || date < dates[tx.symbol])) dates[tx.symbol] = date;
+  });
+  return dates;
+}
+
 function findActiveQuantitySymbols(transactions) {
   var qtyBySymbol = {};
 
@@ -1454,7 +1469,7 @@ function findAssetsBySymbols(db, symbols, callback) {
     docs.forEach(function (doc) {
       assetsBySymbol[doc.symbol] = doc;
     });
-    callback(null, assetsBySymbol);
+    stockSplitStore.attachConfirmedStockSplits(db, assetsBySymbol, callback);
   });
 }
 
@@ -3201,6 +3216,7 @@ function parseYahooFundPage(html, sourceUrl, reportDate) {
 }
 
 module.exports = {
+  app: app,
   appVersion: APP_VERSION,
   signJwt: signJwt,
   verifyJwt: verifyJwt,
@@ -3527,6 +3543,50 @@ function refreshAssetPrices(db, assets, callback) {
   }
 }
 
+function scanStockSplitsSequentially(db, assets, firstTradeDates, callback) {
+  var index = 0;
+  var results = [];
+  function next() {
+    if (index >= assets.length) { callback(null, results); return; }
+    var asset = assets[index++];
+    priceRefreshJob.currentSymbol = 'Split scan: ' + asset.symbol;
+    stockSplitScan.scanSymbol(db, asset.symbol, firstTradeDates[asset.symbol], getReportDate(), fetchText, function (err, result) {
+      results.push(err ? { ok: false, symbol: asset.symbol, type: 'SPLIT_SCAN', error: err.message } : Object.assign({ type: 'SPLIT_SCAN' }, result));
+      priceRefreshJob.results = priceRefreshJob.results.concat(results.slice(-1)).slice(-100);
+      setTimeout(next, 800);
+    });
+  }
+  next();
+}
+
+function startImportSplitScanJob(symbols) {
+  symbols.forEach(function (symbol) {
+    if (importSplitScanJob.queued.indexOf(symbol) < 0) importSplitScanJob.queued.push(symbol);
+  });
+  if (importSplitScanJob.status == 'RUNNING' || !importSplitScanJob.queued.length) return;
+  importSplitScanJob.status = 'RUNNING';
+  importSplitScanJob.results = [];
+  setTimeout(function () {
+    withDb(function (err, db, close) {
+      if (err) { importSplitScanJob.status = 'ERROR'; importSplitScanJob.error = err.message; return; }
+      findAllTransactions(db, function (findErr, docs) {
+        if (findErr) { close(); importSplitScanJob.status = 'ERROR'; importSplitScanJob.error = findErr.message; return; }
+        var dates = findFirstStockTradeDates(docs);
+        function next() {
+          var symbol = importSplitScanJob.queued.shift();
+          if (!symbol) { close(); importSplitScanJob.status = 'COMPLETED'; importSplitScanJob.currentSymbol = ''; return; }
+          importSplitScanJob.currentSymbol = symbol;
+          stockSplitScan.scanSymbol(db, symbol, dates[symbol], getReportDate(), fetchText, function (scanErr, result) {
+            importSplitScanJob.results.push(scanErr ? { ok: false, symbol: symbol, error: scanErr.message } : result);
+            setTimeout(next, 800);
+          });
+        }
+        next();
+      });
+    });
+  }, 0);
+}
+
 function getPriceRefreshStatus() {
   return {
     status: priceRefreshJob.status,
@@ -3540,7 +3600,8 @@ function getPriceRefreshStatus() {
     currentSymbol: priceRefreshJob.currentSymbol,
     historyRequests: priceRefreshJob.historyRequests,
     pendingSessions: priceRefreshJob.pendingSessions,
-    results: priceRefreshJob.results
+    results: priceRefreshJob.results,
+    importSplitScan: importSplitScanJob
   };
 }
 
@@ -3629,12 +3690,14 @@ function startPriceRefreshJob(targetSymbol) {
               }
 
               var activeSymbols = findActiveQuantitySymbols(docs);
-              summaryRows.forEach(function (row) {
-                if (isFinite(row.netQty) && Math.abs(row.netQty) > 0.0000001) {
-                  activeSymbols[row.symbol] = true;
-                }
+              var adjustedSummaryRows = buildPortfolioSummary(docs, assetsBySymbol);
+              adjustedSummaryRows.forEach(function (row) {
+                var active = isFinite(row.netQty) && Math.abs(row.netQty) > 0.0000001;
+                if (row.assetType == 'STOCK') activeSymbols[row.symbol] = active;
+                else if (active) activeSymbols[row.symbol] = true;
               });
               var historyStartDatesBySymbol = findOldestBuyDatesBySymbol(docs);
+              var firstStockTradeDates = findFirstStockTradeDates(docs);
               var historyToday = getReportDate();
 
               var assets = Object.keys(assetsBySymbol)
@@ -3650,27 +3713,20 @@ function startPriceRefreshJob(targetSymbol) {
                 });
 
               refreshAssetPrices(db, assets, function (refreshErr, results) {
-                if (close) {
-                  close();
-                  close = null;
-                }
                 if (refreshErr) {
-                  finishPriceRefreshJob({
-                    status: 'ERROR',
-                    ok: 0,
-                    failed: assets.length,
-                    error: refreshErr.message
-                  });
+                  if (close) close();
+                  finishPriceRefreshJob({ status: 'ERROR', ok: 0, failed: assets.length, error: refreshErr.message });
                   return;
                 }
-
-                var failed = countFailedAssetRefreshes(results);
-                var ok = Math.max(0, assets.length - failed);
-                finishPriceRefreshJob({
-                  status: 'COMPLETED',
-                  ok: ok,
-                  failed: failed,
-                  error: ''
+                var stockAssets = assets.filter(function (asset) { return asset.assetType == 'STOCK'; });
+                scanStockSplitsSequentially(db, stockAssets, firstStockTradeDates, function (scanErr, scanResults) {
+                  if (close) { close(); close = null; }
+                  var allResults = results.concat(scanResults || []);
+                  priceRefreshJob.results = allResults.slice(-100);
+                  var failed = countFailedAssetRefreshes(allResults);
+                  finishPriceRefreshJob({ status: scanErr ? 'ERROR' : 'COMPLETED',
+                    ok: Math.max(0, assets.length - failed), failed: failed,
+                    error: scanErr ? scanErr.message : '' });
                 });
               });
             });
@@ -3762,6 +3818,7 @@ app.post('/import/sbi', function (req, res) {
             return;
           }
 
+          startImportSplitScanJob(Object.keys(findFirstStockTradeDates(docs)));
           result.label = 'SBI CSV';
           result.link = '/transactions';
           result.linkText = 'View imported transactions';
@@ -4078,9 +4135,9 @@ function buildPriceUpdateRows(summaryRows, assetsBySymbol, historyRows, coverage
   var reportDate = getReportDate(now);
 
   summaryRows.forEach(function (row) {
-    if (isFinite(row.netQty) && Math.abs(row.netQty) > 0.0000001) {
-      activeSymbols[row.symbol] = true;
-    }
+    var active = isFinite(row.netQty) && Math.abs(row.netQty) > 0.0000001;
+    if (row.assetType == 'STOCK') activeSymbols[row.symbol] = active;
+    else if (active) activeSymbols[row.symbol] = true;
   });
 
   return summaryRows.filter(function (row) {
@@ -4335,22 +4392,74 @@ app.get('/prices', function (req, res) {
                 return;
               }
               db.collection('priceHistoryCoverage').find({ symbol: { $in: symbols } }).toArray(function (coverageErr, coverageRows) {
-                close();
-                if (coverageErr) {
-                  res.status(500).send(coverageErr.message);
-                  return;
-                }
-                res.render('prices.ejs', {
-                  rows: buildPriceUpdateRows(summaryRows, assetsBySymbol, historyRows, coverageRows, docs),
-                  reportDate: getReportDate(),
-                  refreshStatus: getPriceRefreshStatus(),
-                  message: req.query.message || ''
+                if (coverageErr) { close(); res.status(500).send(coverageErr.message); return; }
+                db.collection('stockSplits').find().toArray(function (splitErr, splitRows) {
+                  if (splitErr) { close(); res.status(500).send(splitErr.message); return; }
+                  db.collection('stockSplitScans').find().toArray(function (scanErr, scanRows) {
+                    close();
+                    if (scanErr) { res.status(500).send(scanErr.message); return; }
+                    var pending = splitRows.filter(function (row) { return row.status == 'PENDING'; }).map(function (row) {
+                      return Object.assign({}, row, { preview: stockSplitActions.previewCandidate(docs, assetsBySymbol[row.symbol], row, getReportDate()) });
+                    });
+                    res.render('prices.ejs', {
+                      rows: buildPriceUpdateRows(buildPortfolioSummary(docs, assetsBySymbol), assetsBySymbol, historyRows, coverageRows, docs),
+                      reportDate: getReportDate(),
+                      refreshStatus: getPriceRefreshStatus(),
+                      stockSplitCandidates: pending,
+                      confirmedSplits: splitRows.filter(function (row) { return row.status == 'CONFIRMED' && row.operation != 'REMOVE'; }),
+                      splitScanAlerts: scanRows.filter(function (row) { return row.status == 'FAILED' || row.warning; }),
+                      message: req.query.message || ''
+                    });
+                  });
                 });
               });
             });
           });
         });
       });
+    });
+  });
+});
+
+function splitActionRedirect(res, message) {
+  res.redirect('/prices?message=' + encodeURIComponent(message));
+}
+
+app.post('/prices/splits/manual', function (req, res) {
+  withDb(function (err, db, close) {
+    if (err) { res.status(500).send(err.message); return; }
+    stockSplitActions.addManualCandidate(db, req.body).then(function () {
+      close();
+      splitActionRedirect(res, 'Manual split added as pending. Review its impact below and confirm it.');
+    }, function (actionErr) {
+      close();
+      splitActionRedirect(res, actionErr.message);
+    });
+  });
+});
+
+app.post('/prices/splits/:id/confirm', function (req, res) {
+  withDb(function (err, db, close) {
+    if (err) { res.status(500).send(err.message); return; }
+    stockSplitActions.changeStatus(db, req.params.id, 'CONFIRMED').then(function (event) {
+      close();
+      splitActionRedirect(res, 'Split confirmed for ' + event.symbol + ' on ' + event.exDate + '. Portfolio calculations now use it.');
+    }, function (actionErr) {
+      close();
+      splitActionRedirect(res, actionErr.message);
+    });
+  });
+});
+
+app.post('/prices/splits/:id/dismiss', function (req, res) {
+  withDb(function (err, db, close) {
+    if (err) { res.status(500).send(err.message); return; }
+    stockSplitActions.changeStatus(db, req.params.id, 'DISMISSED').then(function (event) {
+      close();
+      splitActionRedirect(res, 'Split dismissed for ' + event.symbol + '.');
+    }, function (actionErr) {
+      close();
+      splitActionRedirect(res, actionErr.message);
     });
   });
 });
